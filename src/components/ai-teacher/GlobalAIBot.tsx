@@ -1,0 +1,1474 @@
+'use client';
+
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { Send, X, Maximize2, Loader2, ClipboardCheck, Mic, Volume2, VolumeX, Square } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { TEACHERS, type TeacherName } from '@/config/teachers';
+import { useTeacherStore } from '@/stores/teacher.store';
+import { useAuthStore } from '@/stores/auth.store';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { useDiagnosticStore } from '@/stores/diagnostic.store';
+import { cn } from '@/lib/utils';
+import { aiTeacherApi } from '@/lib/api/ai-teacher.api';
+import { studentApi, AssignedTeacherInfo } from '@/lib/api/trainee.api';
+import { TalkingAvatar } from './TalkingAvatar';
+import Link from 'next/link';
+
+// Helper to render message content with clickable links and proper formatting
+function renderMessageContent(content: string, isRTL: boolean) {
+  // Remove markdown bold markers (**)
+  let cleaned = content.replace(/\*\*/g, '');
+
+  // Split by URLs and links
+  // Match markdown links [text](url) or plain URLs
+  const urlRegex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+)/g;
+
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match;
+  let keyIndex = 0;
+
+  while ((match = urlRegex.exec(cleaned)) !== null) {
+    // Add text before the link
+    if (match.index > lastIndex) {
+      const textBefore = cleaned.slice(lastIndex, match.index);
+      // Split by newlines to preserve formatting
+      textBefore.split('\n').forEach((line, i, arr) => {
+        if (line) parts.push(<span key={`text-${keyIndex++}`}>{line}</span>);
+        if (i < arr.length - 1) parts.push(<br key={`br-${keyIndex++}`} />);
+      });
+    }
+
+    // Add the link
+    const linkText = match[1] || match[3] || match[0];
+    const linkUrl = match[2] || match[3] || match[0];
+
+    // Check if it's an internal link
+    const isInternal = linkUrl.includes('2ystudy.macsoft.ai') || linkUrl.includes('2ystudy.vercel.app') || linkUrl.includes('2ystudy.com') || linkUrl.includes('localhost');
+
+    if (isInternal) {
+      // Extract path from URL
+      const urlObj = new URL(linkUrl);
+      parts.push(
+        <Link
+          key={`link-${keyIndex++}`}
+          href={urlObj.pathname}
+          className="inline-flex items-center gap-1 text-primary hover:text-primary/80 underline underline-offset-2 font-medium transition-colors"
+        >
+          📚 {linkText.replace(linkUrl, '').trim() || 'Open Course'}
+        </Link>
+      );
+    } else {
+      parts.push(
+        <a
+          key={`link-${keyIndex++}`}
+          href={linkUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-primary hover:text-primary/80 underline underline-offset-2 font-medium transition-colors"
+        >
+          🔗 {linkText}
+        </a>
+      );
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text
+  if (lastIndex < cleaned.length) {
+    const remaining = cleaned.slice(lastIndex);
+    remaining.split('\n').forEach((line, i, arr) => {
+      if (line) parts.push(<span key={`text-${keyIndex++}`}>{line}</span>);
+      if (i < arr.length - 1) parts.push(<br key={`br-${keyIndex++}`} />);
+    });
+  }
+
+  return parts.length > 0 ? parts : cleaned;
+}
+
+interface BotMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  audioBase64?: string;
+}
+
+// Detailed page context for smart guidance
+interface PageContextInfo {
+  key: string;
+  displayText: string;
+  aiPrompt: string; // What the bot should know about this page
+}
+
+function getDetailedPageContext(pathname: string, language: 'ar' | 'en'): PageContextInfo {
+  const isAr = false;
+
+  if (pathname.includes('/dashboard') || pathname === '/') {
+    return {
+      key: 'dashboard',
+      displayText: "You're on the Dashboard — ask me about your progress!",
+      aiPrompt: 'User is on the main dashboard. They can see their progress summary, scores, and stats. Help them understand their numbers and guide them to the next step in their learning journey.'
+    };
+  }
+
+  if (pathname.includes('/courses')) {
+    const isCoursePage = pathname.match(/\/courses\/[^/]+$/);
+    const isLessonPage = pathname.includes('/lessons/');
+
+    if (isLessonPage) {
+      return {
+        key: 'lesson',
+        displayText: "You're in a lesson — ask me about anything you didn't understand!",
+        aiPrompt: 'User is watching a lesson. Help them understand the content, explain difficult concepts, and give practical engineering examples.'
+      };
+    }
+
+    if (isCoursePage) {
+      return {
+        key: 'course',
+        displayText: "You're in a course — I can help you choose the right lesson!",
+        aiPrompt: 'User is browsing a course. Help them understand the course content and organize lessons based on their level and goals.'
+      };
+    }
+
+    return {
+      key: 'courses',
+      displayText: "You're in Courses — let me recommend the best ones for your level!",
+      aiPrompt: 'User is browsing the courses list. Help them choose the right course for their level and weaknesses. Recommend specific courses based on their needs.'
+    };
+  }
+
+  if (pathname.includes('/simulation')) {
+    return {
+      key: 'simulation',
+      displayText: "You're in Live Sessions — ready to discuss engineering topics!",
+      aiPrompt: 'User is in the live sessions section. Here they have interactive engineering discussions with AI mentors on topics like HVAC, PLC, electrical systems, and safety. Help them prepare for the session and give tips before starting.'
+    };
+  }
+
+  if (pathname.includes('/voice-training')) {
+    return {
+      key: 'voice',
+      displayText: "You're in Voice Learning — practice real conversations!",
+      aiPrompt: 'User is in voice training. Here they practice conversations with mentors. Help them improve their tone and communication style.'
+    };
+  }
+
+  if (pathname.includes('/reports')) {
+    return {
+      key: 'reports',
+      displayText: "You're in Reports — let me analyze your performance!",
+      aiPrompt: 'User is viewing their reports. Analyze their performance, identify strengths and weaknesses, and suggest a clear improvement plan.'
+    };
+  }
+
+  if (pathname.includes('/quizzes')) {
+    return {
+      key: 'quizzes',
+      displayText: "You're in Quizzes — test your knowledge!",
+      aiPrompt: 'User is in the quizzes section. Help them prepare for the quiz and review important topics.'
+    };
+  }
+
+  if (pathname.includes('/flashcards')) {
+    return {
+      key: 'flashcards',
+      displayText: "You're in Flashcards — review your knowledge smartly!",
+      aiPrompt: 'User is in the flashcards section. Help them review and memorize important concepts. Explain how to use flashcards effectively.'
+    };
+  }
+
+  return {
+    key: 'general',
+    displayText: 'How can I help you today?',
+    aiPrompt: 'User is on a general page. Be ready to help with any question about electromechanical engineering or using the platform.'
+  };
+}
+
+function getPageContext(pathname: string, t: any): string {
+  if (pathname.includes('/dashboard') || pathname === '/') return t.floatingBot.pageContext.dashboard;
+  if (pathname.includes('/courses')) return t.floatingBot.pageContext.courses;
+  if (pathname.includes('/simulation')) return t.floatingBot.pageContext.simulations;
+  if (pathname.includes('/reports')) return t.floatingBot.pageContext.reports;
+  return t.floatingBot.pageContext.general;
+}
+
+// Session storage keys
+const WELCOME_PLAYED_KEY = 'globalbot_welcome_played';
+const AUTO_OPENED_KEY = 'globalbot_auto_opened';
+
+export function GlobalAIBot() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const { t, language, isRTL } = useLanguage();
+  const {
+    activeTeacher,
+    assignedTeacher,
+    userId: storedUserId,
+    reset: resetTeacherStore,
+    customTeacherAvatar,
+    customTeacherDisplayNameAr,
+    customTeacherDisplayNameEn,
+    customTeacherVoiceId,
+  } = useTeacherStore();
+  const { user } = useAuthStore();
+  const diagnosticStore = useDiagnosticStore();
+
+  // Track if auth store has been hydrated (to prevent race condition redirects)
+  const [isAuthHydrated, setIsAuthHydrated] = useState(false);
+
+  // Start closed, then check if should auto-open on mount
+  const [isOpen, setIsOpen] = useState(false);
+  const [hasCheckedAutoOpen, setHasCheckedAutoOpen] = useState(false);
+  const [messages, setMessages] = useState<BotMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Voice features state
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
+  const [welcomePlayed, setWelcomePlayed] = useState(false);
+  const [isLoadingWelcome, setIsLoadingWelcome] = useState(false);
+  const [autoPlayEnabled, setAutoPlayEnabled] = useState(true); // Auto-play responses
+  const [previousPathname, setPreviousPathname] = useState<string | null>(null);
+
+  // Onboarding welcome state (for new students)
+  const [onboardingWelcomePlayed, setOnboardingWelcomePlayed] = useState(false);
+  const [isPlayingOnboardingWelcome, setIsPlayingOnboardingWelcome] = useState(false);
+
+  // State for onboarding flow (must be at top level to avoid React hooks error)
+  const [onboardingStep, setOnboardingStep] = useState<'initial' | 'speaking' | 'ready'>('initial');
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+
+  // Sara (welcome bot) info from database
+  const [saraInfo, setSaraInfo] = useState<{
+    displayNameAr: string;
+    displayNameEn: string;
+    avatarUrl: string | null;
+  } | null>(null);
+
+  // CRITICAL: Fresh teacher info from API (source of truth)
+  // This overrides any cached localStorage data
+  const [freshTeacherInfo, setFreshTeacherInfo] = useState<AssignedTeacherInfo | null>(null);
+  const [isLoadingTeacher, setIsLoadingTeacher] = useState(true);
+  const teacherFetchedRef = useRef(false);
+
+  // Audio refs
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioQueueRef = useRef<string[]>([]); // Queue for auto-playing audio
+
+  // Fetch fresh teacher info from API on mount (source of truth)
+  useEffect(() => {
+    if (teacherFetchedRef.current || !user?.id) return;
+
+    const fetchTeacher = async () => {
+      try {
+        teacherFetchedRef.current = true;
+        setIsLoadingTeacher(true);
+        const info = await studentApi.getAssignedTeacher();
+        console.log('[GlobalAIBot] Fresh teacher info from API:', info);
+        setFreshTeacherInfo(info);
+
+        // Sync to teacher store for consistency
+        if (info.hasAssignedTeacher && info.teacherName) {
+          useTeacherStore.getState().setAssignedTeacher(info.teacherName as any, {
+            avatar: info.avatarUrl,
+            displayNameAr: info.displayNameAr,
+            displayNameEn: info.displayNameEn,
+            voiceId: info.voiceId,
+          });
+          useTeacherStore.getState().setUserId(user.id);
+        }
+      } catch (error) {
+        console.error('[GlobalAIBot] Failed to fetch teacher info:', error);
+      } finally {
+        setIsLoadingTeacher(false);
+      }
+    };
+
+    fetchTeacher();
+  }, [user?.id]);
+
+  // Determine which teacher to use
+  // Priority: 1) freshTeacherInfo from API (ALWAYS source of truth)
+  //           2) Fallback to localStorage data during loading
+  const rawTeacher = freshTeacherInfo?.teacherName || user?.assignedTeacher || activeTeacher || assignedTeacher || 'abdullah';
+  const currentTeacher = rawTeacher as TeacherName;
+
+  // Get teacher config - use fresh API data if available, otherwise fall back to TEACHERS config
+  const isCustomTeacher = !TEACHERS[currentTeacher];
+
+  // Build teacher object with API data taking priority
+  const teacher = TEACHERS[currentTeacher] || {
+    ...TEACHERS.abdullah, // Base config
+    name: currentTeacher,
+    displayName: {
+      ar: freshTeacherInfo?.displayNameAr || customTeacherDisplayNameAr || currentTeacher,
+      en: freshTeacherInfo?.displayNameEn || customTeacherDisplayNameEn || currentTeacher,
+    },
+    avatarUrl: freshTeacherInfo?.avatarUrl || customTeacherAvatar || TEACHERS.abdullah.avatarUrl,
+  };
+
+  // For custom teachers, use fresh API avatar if available, otherwise fall back
+  const effectiveAvatarUrl = freshTeacherInfo?.avatarUrl
+    || (isCustomTeacher && customTeacherAvatar)
+    || teacher.avatarUrl;
+
+  // Get detailed page context
+  const pageContext = getDetailedPageContext(pathname, language);
+
+  // Auto-play audio helper
+  const autoPlayAudio = useCallback((audioBase64: string, messageId: string) => {
+    if (!autoPlayEnabled) return;
+
+    // Stop any current audio
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+
+    const audio = new Audio(`data:audio/mpeg;base64,${audioBase64}`);
+    currentAudioRef.current = audio;
+    setPlayingMessageId(messageId);
+
+    audio.onended = () => {
+      setPlayingMessageId(null);
+      currentAudioRef.current = null;
+    };
+
+    audio.onerror = () => {
+      setPlayingMessageId(null);
+      currentAudioRef.current = null;
+    };
+
+    // Play with user interaction fallback
+    audio.play().catch(() => {
+      // Autoplay blocked - will need user interaction
+      setPlayingMessageId(null);
+      setAutoPlayEnabled(false); // Disable auto-play since browser blocked it
+    });
+  }, [autoPlayEnabled]);
+
+  // Wait for auth store to hydrate before making redirect decisions
+  // This prevents the race condition where we redirect before user data is loaded
+  useEffect(() => {
+    // Check if auth store has been hydrated by looking at persist state
+    const checkHydration = () => {
+      const authStorage = localStorage.getItem('auth-storage');
+      if (authStorage) {
+        try {
+          const parsed = JSON.parse(authStorage);
+          // If there's stored data and we have a user, or if storage is empty, we're hydrated
+          if (parsed?.state?.user || !parsed?.state?.token) {
+            setIsAuthHydrated(true);
+          }
+        } catch {
+          setIsAuthHydrated(true);
+        }
+      } else {
+        // No storage means no logged in user, which is a valid hydrated state
+        setIsAuthHydrated(true);
+      }
+    };
+
+    // Small delay to ensure Zustand persist has loaded
+    const timer = setTimeout(checkHydration, 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Sync teacher store with auth store on login
+  // If user has assignedTeacher from backend, update the teacher store
+  useEffect(() => {
+    if (user?.id && user.assignedTeacher) {
+      const currentTeacherStore = useTeacherStore.getState();
+      // Only update if teacher store doesn't have this user's teacher, or if it's a different user
+      if (!currentTeacherStore.assignedTeacher || currentTeacherStore.userId !== user.id) {
+        console.log('[GlobalAIBot] Syncing teacher from auth:', user.assignedTeacher);
+        useTeacherStore.getState().setAssignedTeacher(user.assignedTeacher as any, {
+          avatar: user.assignedTeacherAvatar,
+          displayNameAr: user.assignedTeacherDisplayNameAr,
+          displayNameEn: user.assignedTeacherDisplayNameEn,
+          voiceId: user.assignedTeacherVoiceId,
+        });
+        useTeacherStore.getState().setUserId(user.id);
+      }
+      // Mark as hydrated once we have user data
+      setIsAuthHydrated(true);
+    }
+  }, [user?.id, user?.assignedTeacher, user?.assignedTeacherAvatar]);
+
+  // Check if the stored teacher data belongs to the current user
+  // If not, reset it (this happens when a different user logs in)
+  useEffect(() => {
+    if (user?.id && storedUserId && storedUserId !== user.id) {
+      console.log('[GlobalAIBot] Different user detected, resetting teacher store');
+      console.log('[GlobalAIBot] Current user:', user.id, 'Stored user:', storedUserId);
+      resetTeacherStore();
+      // But then sync from auth if user has assigned teacher
+      if (user.assignedTeacher) {
+        useTeacherStore.getState().setAssignedTeacher(user.assignedTeacher as any, {
+          avatar: user.assignedTeacherAvatar,
+          displayNameAr: user.assignedTeacherDisplayNameAr,
+          displayNameEn: user.assignedTeacherDisplayNameEn,
+          voiceId: user.assignedTeacherVoiceId,
+        });
+        useTeacherStore.getState().setUserId(user.id);
+      }
+    }
+  }, [user?.id, storedUserId, resetTeacherStore, user?.assignedTeacher, user?.assignedTeacherAvatar]);
+
+  // Check if assessment is complete:
+  // 1. From fresh API data (source of truth)
+  // 2. OR from teacher store (for current session)
+  // 3. OR from auth store (from backend - user already has assigned teacher)
+  const hasCompletedAssessment = freshTeacherInfo?.hasAssignedTeacher || assignedTeacher !== null || user?.assignedTeacher !== null;
+
+  // Hide on specific pages (but allow welcome bot for new students on assessment pages)
+  // Assessment can be at /assessment OR /simulation?diagnostic=true
+  const isOnAssessmentPage = pathname.includes('/assessment') ||
+    (pathname.includes('/simulation') && typeof window !== 'undefined' && window.location.search.includes('diagnostic=true'));
+  const hiddenPaths = ['/ai-teacher'];
+
+  // For new students: NEVER hide on assessment page (they need the welcome bot!)
+  // For existing students: hide on assessment page since they already completed it
+  const shouldHideOnPath = hiddenPaths.some(p => pathname.includes(p)) ||
+    (isOnAssessmentPage && hasCompletedAssessment); // Hide on assessment only if already completed
+
+  // Hide for admin roles - bot is only for students
+  const adminRoles = ['saas_super_admin', 'org_admin', 'admin', 'trainer', 'supervisor'];
+  const isAdminUser = user?.role && adminRoles.includes(user.role);
+
+  // Combined hide condition - BUT never hide for new students on assessment page!
+  const shouldHide = isAdminUser || (shouldHideOnPath && hasCompletedAssessment);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Focus input when opened
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, [isOpen]);
+
+  // Auto-open on first visit (browser-side only)
+  useEffect(() => {
+    // Only run once on mount
+    if (hasCheckedAutoOpen) return;
+
+    // Small delay to let auth state settle
+    const timer = setTimeout(() => {
+      // For new students (no assessment) - ALWAYS open the bot immediately
+      if (!hasCompletedAssessment && !isAdminUser) {
+        console.log('[GlobalAIBot] Auto-opening for new student (no assessment)');
+        setIsOpen(true);
+        setHasCheckedAutoOpen(true);
+        return;
+      }
+
+      // For students with completed assessment - check sessionStorage
+      if (hasCompletedAssessment && !isAdminUser) {
+        const wasAutoOpened = sessionStorage.getItem(AUTO_OPENED_KEY);
+        if (!wasAutoOpened) {
+          setIsOpen(true);
+          sessionStorage.setItem(AUTO_OPENED_KEY, 'true');
+        }
+      }
+      setHasCheckedAutoOpen(true);
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [hasCheckedAutoOpen, hasCompletedAssessment, isAdminUser]);
+
+  // Play welcome audio on first open
+  useEffect(() => {
+    if (isOpen && hasCompletedAssessment && !welcomePlayed && messages.length === 0) {
+      // Check session storage
+      const played = sessionStorage.getItem(`${WELCOME_PLAYED_KEY}_${currentTeacher}`);
+      if (played) {
+        setWelcomePlayed(true);
+        return;
+      }
+
+      const playWelcome = async () => {
+        setIsLoadingWelcome(true);
+        try {
+          // Fetch welcome audio — wrapped for graceful degradation
+          let result: { message: string; audio: string } | null = null;
+          try {
+            result = await aiTeacherApi.getWelcomeAudio(currentTeacher, language);
+          } catch {
+            console.warn('[GlobalAIBot] Welcome audio API unavailable for', currentTeacher);
+          }
+
+          // Build welcome message (text always shown, audio optional)
+          const welcomeMsg: BotMessage = {
+            id: `welcome-${Date.now()}`,
+            role: 'assistant',
+            content: result?.message || (language === 'ar'
+              ? `أهلاً وسهلاً! أنا ${teacher.displayName.ar}، كيف أقدر أساعدك اليوم؟`
+              : `Welcome! I'm ${teacher.displayName.en}, how can I help you today?`),
+            timestamp: new Date(),
+            audioBase64: result?.audio,
+          };
+          setMessages([welcomeMsg]);
+
+          // Play audio automatically if available
+          if (result?.audio) {
+            // CRITICAL: Stop any existing audio before playing new one
+            if (currentAudioRef.current) {
+              currentAudioRef.current.pause();
+              currentAudioRef.current = null;
+              setPlayingMessageId(null);
+            }
+
+            const audio = new Audio(`data:audio/mpeg;base64,${result.audio}`);
+            currentAudioRef.current = audio;
+            setPlayingMessageId(welcomeMsg.id);
+
+            audio.onended = () => {
+              setPlayingMessageId(null);
+              currentAudioRef.current = null;
+            };
+
+            audio.onerror = () => {
+              console.warn('[GlobalAIBot] Audio element failed to decode for', currentTeacher);
+              setPlayingMessageId(null);
+              currentAudioRef.current = null;
+            };
+
+            // Try to play — may be blocked by browser autoplay policy
+            audio.play().catch(() => {
+              setPlayingMessageId(null);
+            });
+          }
+
+          // Mark as played
+          sessionStorage.setItem(`${WELCOME_PLAYED_KEY}_${currentTeacher}`, 'true');
+          setWelcomePlayed(true);
+        } catch (error) {
+          console.warn('[GlobalAIBot] Welcome flow error, showing text fallback:', error);
+          // Show text-only welcome
+          const fallbackMsg: BotMessage = {
+            id: `welcome-${Date.now()}`,
+            role: 'assistant',
+            content: `Welcome! I'm ${teacher.displayName.en}, how can I help you today?`,
+            timestamp: new Date(),
+          };
+          setMessages([fallbackMsg]);
+          setWelcomePlayed(true);
+        } finally {
+          setIsLoadingWelcome(false);
+        }
+      };
+
+      playWelcome();
+    }
+  }, [isOpen, hasCompletedAssessment, welcomePlayed, currentTeacher, language, messages.length, teacher.displayName]);
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+    };
+  }, []);
+
+  // CRITICAL: Redirect new students to assessment page if they try to access other pages
+  // Only redirect ONCE - use a ref to track if we've already redirected
+  // IMPORTANT: Wait for auth to hydrate before making redirect decision!
+  const hasRedirectedRef = useRef(false);
+  useEffect(() => {
+    // Don't redirect until auth store is hydrated (prevents race condition)
+    if (!isAuthHydrated) {
+      console.log('[GlobalAIBot] Waiting for auth hydration before redirect check...');
+      return;
+    }
+
+    // Only redirect if: new student + not on assessment + not admin + haven't redirected yet
+    if (!hasCompletedAssessment && !isOnAssessmentPage && !isAdminUser && !hasRedirectedRef.current) {
+      hasRedirectedRef.current = true; // Prevent infinite redirects
+      console.log('[GlobalAIBot] Redirecting new student to assessment page');
+      console.log('[GlobalAIBot] hasCompletedAssessment:', hasCompletedAssessment, 'assignedTeacher:', assignedTeacher, 'user.assignedTeacher:', user?.assignedTeacher);
+      router.replace('/assessment');
+    }
+  }, [hasCompletedAssessment, isOnAssessmentPage, isAdminUser, router, isAuthHydrated, assignedTeacher, user?.assignedTeacher]);
+
+  // Ref to prevent duplicate onboarding welcome calls
+  const onboardingWelcomeTriggeredRef = useRef(false);
+
+  // Fetch Sara's info from database for onboarding (avatar, display name)
+  useEffect(() => {
+    if (!hasCompletedAssessment && !saraInfo) {
+      aiTeacherApi.getTeacherInfo('sara')
+        .then((info) => {
+          if (info) {
+            setSaraInfo({
+              displayNameAr: info.displayNameAr,
+              displayNameEn: info.displayNameEn,
+              avatarUrl: info.avatarUrl,
+            });
+          }
+        })
+        .catch((err) => {
+          console.error('[GlobalAIBot] Failed to fetch Sara info:', err);
+        });
+    }
+  }, [hasCompletedAssessment, saraInfo]);
+
+  // Show Sara's welcome for new students when bot opens (no auto-play for WCAG accessibility)
+  useEffect(() => {
+    // Must be: new student + bot is open + haven't triggered yet + not admin
+    if (!hasCompletedAssessment && isOpen && !onboardingWelcomeTriggeredRef.current && !isAdminUser) {
+      // Mark as triggered IMMEDIATELY to prevent any race conditions
+      onboardingWelcomeTriggeredRef.current = true;
+      console.log('[GlobalAIBot] Showing Sara welcome for new student');
+
+      // Show the initial step with CTA button — user chooses when to play audio
+      // This respects WCAG 1.4.2: no auto-playing audio
+      setOnboardingStep('initial');
+    }
+  }, [hasCompletedAssessment, isOpen, isAdminUser, language]);
+
+  // Detect page changes and offer contextual help
+  useEffect(() => {
+    if (!isOpen || !hasCompletedAssessment || !welcomePlayed) return;
+    if (previousPathname === pathname) return;
+    if (previousPathname === null) {
+      // First load, just set the pathname
+      setPreviousPathname(pathname);
+      return;
+    }
+
+    // Page changed! Offer contextual guidance
+    setPreviousPathname(pathname);
+    const newPageContext = getDetailedPageContext(pathname, language);
+
+    // Don't add guidance for every tiny navigation
+    if (newPageContext.key === 'general') return;
+
+    // Add a contextual message from the teacher
+    const guidanceMsg: BotMessage = {
+      id: `guidance-${Date.now()}`,
+      role: 'assistant',
+      content: `📍 ${newPageContext.displayText}\n\nNeed help with this page?`,
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, guidanceMsg]);
+
+    // Get audio for the guidance (shorter version)
+    const shortGuidance = newPageContext.displayText;
+    aiTeacherApi.textToSpeech(shortGuidance, language, currentTeacher)
+      .then(result => {
+        // Update the message with audio
+        setMessages(prev => prev.map(msg =>
+          msg.id === guidanceMsg.id ? { ...msg, audioBase64: result.audio } : msg
+        ));
+        // Auto-play the guidance
+        autoPlayAudio(result.audio, guidanceMsg.id);
+      })
+      .catch(() => {
+        // TTS failed, no audio
+      });
+  }, [pathname, previousPathname, isOpen, hasCompletedAssessment, welcomePlayed, language, currentTeacher, autoPlayAudio]);
+
+  const handleSend = useCallback(async () => {
+    const trimmed = input.trim();
+    if (!trimmed || isLoading) return;
+
+    // Re-enable auto-play on user interaction (browser allows it after user interaction)
+    setAutoPlayEnabled(true);
+
+    const userMsg: BotMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: trimmed,
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      // Add page context to the message for smarter responses
+      const contextualMessage = `[Page context: ${pageContext.aiPrompt}]\n\nUser question: ${trimmed}`;
+
+      const response = await aiTeacherApi.sendMessage(contextualMessage, undefined, undefined, currentTeacher);
+
+      const assistantMsgId = `assistant-${Date.now()}`;
+
+      // Get audio for response (increased limit for better experience)
+      let audioBase64: string | undefined;
+      if (response.message.length < 800) {
+        try {
+          const ttsResult = await aiTeacherApi.textToSpeech(response.message, language, currentTeacher);
+          audioBase64 = ttsResult.audio;
+        } catch {
+          // TTS failed, continue without audio
+        }
+      }
+
+      const assistantMsg: BotMessage = {
+        id: assistantMsgId,
+        role: 'assistant',
+        content: response.message,
+        timestamp: new Date(),
+        audioBase64,
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+
+      // Auto-play the response audio
+      if (audioBase64) {
+        autoPlayAudio(audioBase64, assistantMsgId);
+      }
+    } catch {
+      const errorMsg: BotMessage = {
+        id: `error-${Date.now()}`,
+        role: 'assistant',
+        content: 'Sorry, an error occurred. Please try again.',
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [input, isLoading, currentTeacher, language, pageContext.aiPrompt, autoPlayAudio]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  // Voice recording handlers
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        stream.getTracks().forEach(track => track.stop());
+
+        // Transcribe
+        setIsTranscribing(true);
+        try {
+          const result = await aiTeacherApi.speechToText(audioBlob, language);
+          if (result.text) {
+            setInput(prev => prev + (prev ? ' ' : '') + result.text);
+          }
+        } catch (error) {
+          console.error('Transcription failed:', error);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  // Audio playback handlers
+  const playMessageAudio = (message: BotMessage) => {
+    if (!message.audioBase64) return;
+
+    // Stop current audio if playing
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+
+      // If clicking same message, just stop
+      if (playingMessageId === message.id) {
+        setPlayingMessageId(null);
+        return;
+      }
+    }
+
+    const audio = new Audio(`data:audio/mpeg;base64,${message.audioBase64}`);
+    currentAudioRef.current = audio;
+    setPlayingMessageId(message.id);
+
+    audio.onended = () => {
+      setPlayingMessageId(null);
+      currentAudioRef.current = null;
+    };
+
+    audio.play().catch(() => {
+      setPlayingMessageId(null);
+    });
+  };
+
+  const stopAudio = () => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+      setPlayingMessageId(null);
+    }
+  };
+
+  if (shouldHide) return null;
+
+  // Function to start Sara's welcome - uses database settings (voice, message)
+  const startSaraWelcome = async () => {
+    setIsLoadingAudio(true);
+    setOnboardingStep('speaking');
+
+    try {
+      // CRITICAL: Stop any existing audio before playing Sara's welcome
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+        setPlayingMessageId(null);
+      }
+
+      // Use getWelcomeAudio API - fetches welcome message and voice from database for Sara
+      const result = await aiTeacherApi.getWelcomeAudio('sara', language);
+
+      if (result.audio) {
+        const audio = new Audio(`data:audio/mpeg;base64,${result.audio}`);
+        currentAudioRef.current = audio;
+        setIsLoadingAudio(false);
+
+        audio.onended = () => {
+          currentAudioRef.current = null;
+          setOnboardingStep('ready');
+        };
+
+        audio.onerror = () => {
+          currentAudioRef.current = null;
+          setOnboardingStep('ready');
+        };
+
+        await audio.play();
+      } else {
+        setIsLoadingAudio(false);
+        setOnboardingStep('ready');
+      }
+    } catch (e) {
+      console.error('Failed to play welcome:', e);
+      setIsLoadingAudio(false);
+      setOnboardingStep('ready');
+    }
+  };
+
+  // If no assessment completed, show welcoming onboarding bot
+  if (!hasCompletedAssessment) {
+    // Collapsed state - attractive pulsing button
+    if (!isOpen) {
+      return (
+        <button
+          onClick={() => setIsOpen(true)}
+          className={cn(
+            'fixed bottom-6 z-50 group',
+            isRTL ? 'left-6' : 'right-6'
+          )}
+          aria-label="Welcome!"
+        >
+          {/* Main button */}
+          <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-cyan-400 via-blue-500 to-green-600 text-white flex items-center justify-center shadow-xl hover:scale-110 transition-all duration-300 ring-4 ring-white/30">
+            <span className="text-3xl">👋</span>
+            {/* Pulse rings */}
+            <span className="absolute inset-0 rounded-full bg-gradient-to-br from-cyan-400 to-green-600 animate-ping opacity-25" />
+            <span className="absolute inset-[-4px] rounded-full border-2 border-cyan-400/50 animate-pulse" />
+          </div>
+          {/* Floating label */}
+          <div className={cn(
+            "absolute top-1/2 -translate-y-1/2 bg-white dark:bg-card px-3 py-1.5 rounded-full shadow-lg text-sm font-medium text-cyan-700 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity",
+            isRTL ? 'right-20' : 'left-20'
+          )}>
+            {'👋 Hi! Click to start'}
+          </div>
+          {/* Sparkles */}
+          <span className="absolute -top-1 -right-1 text-xl animate-bounce">✨</span>
+          <span className="absolute -bottom-1 -left-1 text-lg animate-pulse delay-300">🌟</span>
+        </button>
+      );
+    }
+
+    // STEP 1: Initial welcome - single CTA to start voice
+    if (onboardingStep === 'initial') {
+      return (
+        <div className={cn(
+          'fixed bottom-6 z-50',
+          'w-[380px] bg-gradient-to-br from-cyan-50 via-blue-50 to-green-50 dark:from-teal-950 dark:via-blue-950 dark:to-green-950 border border-cyan-200 dark:border-cyan-800 rounded-3xl shadow-2xl',
+          'flex flex-col overflow-hidden',
+          isRTL ? 'left-6' : 'right-6'
+        )}>
+          {/* Animated header */}
+          <div className="relative bg-gradient-to-r from-cyan-500 via-blue-500 to-green-500 px-6 py-5 text-white overflow-hidden">
+            {/* Animated background particles */}
+            <div className="absolute inset-0 overflow-hidden">
+              <div className="absolute top-2 left-4 w-2 h-2 bg-white/30 rounded-full animate-bounce" style={{ animationDelay: '0s' }} />
+              <div className="absolute top-4 right-8 w-1.5 h-1.5 bg-white/20 rounded-full animate-bounce" style={{ animationDelay: '0.5s' }} />
+              <div className="absolute bottom-3 left-12 w-1 h-1 bg-white/25 rounded-full animate-bounce" style={{ animationDelay: '1s' }} />
+            </div>
+
+            <div className="relative flex items-center gap-4">
+              {/* Sara Avatar - from database */}
+              <div className="relative">
+                <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur overflow-hidden ring-4 ring-white/30">
+                  {saraInfo?.avatarUrl ? (
+                    <img src={saraInfo.avatarUrl} alt="Sara" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <span className="text-4xl">👩‍💼</span>
+                    </div>
+                  )}
+                </div>
+                {/* Online indicator */}
+                <span className="absolute bottom-0 right-0 w-4 h-4 bg-green-400 rounded-full border-2 border-white animate-pulse" />
+              </div>
+              <div className="flex-1">
+                <h2 className="font-bold text-xl">
+                  {`I'm ${saraInfo?.displayNameEn || 'Sara'}! 👋`}
+                </h2>
+                <p className="text-white/80 text-sm">Your personal onboarding guide</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="p-6 text-center space-y-5">
+            {/* Welcome message bubble */}
+            <div className="relative bg-white dark:bg-card rounded-2xl p-4 shadow-sm border border-cyan-100 dark:border-cyan-800">
+              <div className="absolute -top-2 left-6 w-4 h-4 bg-white dark:bg-card border-l border-t border-cyan-100 dark:border-cyan-800 rotate-45" />
+              <p className="text-foreground text-base leading-relaxed">
+                {"Hello there! 🌟 So happy you're here. Let me introduce myself and explain what we'll do together!"}
+              </p>
+            </div>
+
+            {/* Single prominent CTA */}
+            <Button
+              onClick={startSaraWelcome}
+              disabled={isLoadingAudio}
+              className="w-full h-14 text-lg font-bold bg-gradient-to-r from-cyan-500 via-blue-500 to-green-500 hover:from-cyan-600 hover:via-blue-600 hover:to-green-600 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02]"
+            >
+              {isLoadingAudio ? (
+                <Loader2 className="w-5 h-5 animate-spin mr-2" />
+              ) : (
+                <Volume2 className="w-5 h-5 mr-2" />
+              )}
+              {'🎧 Tap to hear Sara speak'}
+            </Button>
+
+            {/* Skip option */}
+            <button
+              onClick={() => setOnboardingStep('ready')}
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {'Skip →'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // STEP 2: Sara is speaking - animated state
+    if (onboardingStep === 'speaking') {
+      return (
+        <div className={cn(
+          'fixed bottom-6 z-50',
+          'w-[380px] bg-gradient-to-br from-cyan-50 via-blue-50 to-green-50 dark:from-teal-950 dark:via-blue-950 dark:to-green-950 border border-cyan-200 dark:border-cyan-800 rounded-3xl shadow-2xl',
+          'flex flex-col overflow-hidden',
+          isRTL ? 'left-6' : 'right-6'
+        )}>
+          {/* Header with speaking indicator */}
+          <div className="relative bg-gradient-to-r from-cyan-500 via-blue-500 to-green-500 px-6 py-5 text-white">
+            <div className="flex items-center gap-4">
+              {/* Animated speaking avatar - from database */}
+              <div className="relative">
+                <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur overflow-hidden ring-4 ring-white/50 animate-pulse">
+                  {saraInfo?.avatarUrl ? (
+                    <img src={saraInfo.avatarUrl} alt="Sara" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <span className="text-4xl">👩‍💼</span>
+                    </div>
+                  )}
+                </div>
+                {/* Sound waves */}
+                <div className="absolute -right-1 top-1/2 -translate-y-1/2 flex gap-0.5">
+                  <div className="w-1 h-3 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-1 h-5 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-1 h-4 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              </div>
+              <div className="flex-1">
+                <h2 className="font-bold text-xl flex items-center gap-2">
+                  {`${saraInfo?.displayNameEn || 'Sara'} is speaking...`}
+                  <span className="inline-flex gap-1">
+                    <span className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </span>
+                </h2>
+                <p className="text-white/80 text-sm">Listen to the welcome</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Content - Live transcription style */}
+          <div className="p-6 space-y-4">
+            <div className="bg-white dark:bg-card rounded-2xl p-4 shadow-sm border border-cyan-100 dark:border-cyan-800 min-h-[120px]">
+              <p className="text-foreground text-base leading-relaxed animate-pulse">
+                {"Hello and welcome! I'm Sara, your onboarding guide. So happy you're here! Before we start your engineering journey..."}
+              </p>
+            </div>
+
+            {/* Audio visualizer */}
+            <div className="flex items-center justify-center gap-1 h-8">
+              {[...Array(12)].map((_, i) => (
+                <div
+                  key={i}
+                  className="w-1 bg-cyan-500 rounded-full animate-bounce"
+                  style={{
+                    height: `${Math.random() * 20 + 10}px`,
+                    animationDelay: `${i * 100}ms`,
+                    animationDuration: '0.5s'
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* Stop and Replay buttons */}
+            <div className="flex gap-2">
+              <Button
+                onClick={() => {
+                  if (currentAudioRef.current) {
+                    currentAudioRef.current.pause();
+                    currentAudioRef.current = null;
+                  }
+                  setOnboardingStep('ready');
+                }}
+                variant="outline"
+                className="flex-1 h-10 text-sm border-red-300 text-red-600 hover:bg-red-50 rounded-xl"
+              >
+                <Square className="w-4 h-4 mr-2" />
+                Stop
+              </Button>
+              <Button
+                onClick={() => {
+                  // Stop current audio and replay
+                  if (currentAudioRef.current) {
+                    currentAudioRef.current.pause();
+                    currentAudioRef.current = null;
+                  }
+                  // Restart Sara's welcome
+                  startSaraWelcome();
+                }}
+                variant="outline"
+                className="flex-1 h-10 text-sm border-cyan-300 text-cyan-600 hover:bg-cyan-50 rounded-xl"
+              >
+                <Volume2 className="w-4 h-4 mr-2" />
+                Replay
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // STEP 3: Ready to start assessment
+    return (
+      <div className={cn(
+        'fixed bottom-6 z-50',
+        'w-[380px] bg-gradient-to-br from-cyan-50 via-blue-50 to-green-50 dark:from-teal-950 dark:via-blue-950 dark:to-green-950 border border-cyan-200 dark:border-cyan-800 rounded-3xl shadow-2xl',
+        'flex flex-col overflow-hidden',
+        isRTL ? 'left-6' : 'right-6'
+      )}>
+        {/* Success header */}
+        <div className="relative bg-gradient-to-r from-cyan-500 via-blue-500 to-green-500 px-6 py-4 text-white">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur overflow-hidden">
+              {saraInfo?.avatarUrl ? (
+                <img src={saraInfo.avatarUrl} alt="Sara" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <span className="text-2xl">✨</span>
+                </div>
+              )}
+            </div>
+            <div>
+              <h2 className="font-bold text-lg">{"Let's start your journey!"}</h2>
+              <p className="text-white/80 text-xs">
+                {`${saraInfo?.displayNameEn || 'Sara'} is ready to help`}
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-3 right-3 h-8 w-8 text-white/80 hover:text-white hover:bg-white/20 rounded-full"
+            onClick={() => setIsOpen(false)}
+            aria-label={language === 'ar' ? 'إغلاق' : 'Close'}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* Content */}
+        <div className="p-5 space-y-4">
+          {/* Quick info */}
+          <div className="bg-white dark:bg-card rounded-xl p-4 shadow-sm border border-cyan-100 dark:border-cyan-800">
+            <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+              <span>📋</span>
+              Step 1: Level Assessment
+            </h3>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              {[
+                { icon: '⏱️', en: 'Only 5 minutes' },
+                { icon: '💬', en: 'Chat with a virtual mentor' },
+                { icon: '🎯', en: 'We match you with the right teacher' },
+              ].map((item, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span>{item.icon}</span>
+                  <span>{item.en}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Listen again option */}
+          <button
+            onClick={() => setOnboardingStep('initial')}
+            className="w-full flex items-center justify-center gap-2 text-sm text-cyan-600 hover:text-cyan-700 transition-colors py-2"
+          >
+            <Volume2 className="w-4 h-4" />
+            {`Listen to ${saraInfo?.displayNameEn || 'Sara'} again`}
+          </button>
+
+          {/* Main CTA */}
+          <Button
+            onClick={async () => {
+              try {
+                await diagnosticStore.startAssessment();
+                setIsOpen(false);
+              } catch (error) {
+                console.error('Failed to start assessment:', error);
+              }
+            }}
+            className="w-full h-14 text-lg font-bold bg-gradient-to-r from-cyan-500 via-blue-500 to-green-500 hover:from-cyan-600 hover:via-blue-600 hover:to-green-600 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02]"
+          >
+            <span className="mr-2 text-xl">🚀</span>
+            {"Let's Start!"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Collapsed state — floating button (assessment completed)
+  if (!isOpen) {
+    return (
+      <button
+        onClick={() => setIsOpen(true)}
+        className={cn(
+          'fixed bottom-6 z-50 group',
+          isRTL ? 'left-6' : 'right-6'
+        )}
+        aria-label={t.floatingBot.quickChat}
+      >
+        {/* Main button with avatar */}
+        <div className={cn(
+          'relative w-16 h-16 rounded-2xl shadow-xl overflow-hidden',
+          'bg-gradient-to-br',
+          'hover:scale-105 transition-all duration-300',
+          'ring-4 ring-white/20 hover:ring-white/40',
+          teacher.gradient
+        )}>
+          {/* Teacher avatar image */}
+          <img
+            src={effectiveAvatarUrl}
+            alt={teacher.displayName[language]}
+            className="w-full h-full object-cover"
+          />
+          {/* Online indicator */}
+          <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white animate-pulse" />
+        </div>
+        {/* Pulse ring */}
+        <span className={cn(
+          'absolute inset-0 rounded-2xl bg-gradient-to-br animate-ping opacity-20',
+          teacher.gradient
+        )} />
+        {/* Hover tooltip */}
+        <div className={cn(
+          'absolute top-1/2 -translate-y-1/2 bg-card px-3 py-2 rounded-xl shadow-lg',
+          'opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none',
+          'border border-border whitespace-nowrap',
+          isRTL ? 'right-20' : 'left-20'
+        )}>
+          <p className="text-sm font-medium text-foreground">{teacher.displayName[language]}</p>
+          <p className="text-xs text-muted-foreground">Click to chat</p>
+        </div>
+      </button>
+    );
+  }
+
+  // Expanded state — chat panel
+  return (
+    <div className={cn(
+      'fixed bottom-6 z-50',
+      'w-[420px] max-h-[560px] bg-card border border-border/50 rounded-3xl shadow-2xl',
+      'flex flex-col overflow-hidden backdrop-blur-sm',
+      isRTL ? 'left-6' : 'right-6',
+      // Mobile: full width
+      'max-sm:w-[calc(100%-2rem)] max-sm:left-4 max-sm:right-4'
+    )}>
+      {/* Premium Header with Talking Avatar */}
+      <div className={cn(
+        'relative flex items-center justify-between px-5 py-4',
+        'bg-gradient-to-r text-white overflow-hidden',
+        teacher.gradient
+      )}>
+        {/* Subtle animated background pattern */}
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute top-0 left-0 w-32 h-32 bg-white/20 rounded-full blur-2xl animate-pulse" />
+          <div className="absolute bottom-0 right-0 w-24 h-24 bg-white/20 rounded-full blur-xl animate-pulse delay-300" />
+        </div>
+
+        <div className="relative flex items-center gap-4">
+          {/* Avatar with ring effect */}
+          <div className="relative">
+            <div className={cn(
+              'ring-2 ring-white/30 rounded-full',
+              playingMessageId && 'ring-4 ring-white/50 animate-pulse'
+            )}>
+              <TalkingAvatar
+                teacherName={currentTeacher as TeacherName}
+                size="lg"
+                isSpeaking={playingMessageId !== null}
+                audioElement={currentAudioRef.current}
+                avatarUrl={effectiveAvatarUrl}
+              />
+            </div>
+            {/* Online status */}
+            <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-400 rounded-full border-2 border-white" />
+          </div>
+          <div>
+            <h3 className="font-bold text-lg">{teacher.displayName[language]}</h3>
+            <p className="text-xs text-white/80">{teacher.shortDescription[language]}</p>
+          </div>
+        </div>
+        <div className="relative flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/20 rounded-xl"
+            onClick={() => {
+              stopAudio();
+              setIsOpen(false);
+              router.push('/ai-teacher');
+            }}
+            title={t.teacher.openFullChat}
+            aria-label={language === 'ar' ? 'فتح المحادثة الكاملة' : 'Open full chat'}
+          >
+            <Maximize2 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/20 rounded-xl"
+            onClick={() => {
+              stopAudio();
+              setIsOpen(false);
+            }}
+            aria-label={language === 'ar' ? 'إغلاق المحادثة' : 'Close chat'}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Context Banner - Smart guidance */}
+      <div className={cn(
+        'px-4 py-2.5 text-xs border-b flex items-center gap-2',
+        'bg-gradient-to-r from-muted/80 to-muted/40'
+      )}>
+        <span className="text-base">📍</span>
+        <span className="text-muted-foreground">{pageContext.displayText}</span>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-[240px] max-h-[340px] scroll-smooth">
+        {isLoadingWelcome && (
+          <div className="flex items-center justify-center h-full">
+            <div className="flex flex-col items-center gap-3 text-muted-foreground">
+              <div className="relative">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <div className="absolute inset-0 h-8 w-8 animate-ping opacity-20 rounded-full bg-primary" />
+              </div>
+              <span className="text-sm">Loading...</span>
+            </div>
+          </div>
+        )}
+        {!isLoadingWelcome && messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-center py-8">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-4">
+              <span className="text-3xl">💬</span>
+            </div>
+            <p className="text-muted-foreground text-sm">{t.floatingBot.greeting}</p>
+            <p className="text-muted-foreground/60 text-xs mt-1">
+              Type your question or use the microphone
+            </p>
+          </div>
+        )}
+        {messages.map((msg) => (
+          <div
+            key={msg.id}
+            className={cn(
+              'flex flex-col gap-1.5',
+              msg.role === 'user'
+                ? (isRTL ? 'items-start' : 'items-end')
+                : (isRTL ? 'items-end' : 'items-start')
+            )}
+          >
+            <div className={cn(
+              'max-w-[85%] px-4 py-3 text-sm shadow-sm',
+              msg.role === 'user'
+                ? 'bg-gradient-to-br from-primary to-primary/90 text-primary-foreground rounded-2xl rounded-br-md'
+                : 'bg-muted/80 text-foreground rounded-2xl rounded-bl-md border border-border/50'
+            )}>
+              <div className="whitespace-pre-wrap break-words leading-relaxed">
+                {msg.role === 'assistant' ? renderMessageContent(msg.content, isRTL) : msg.content}
+              </div>
+            </div>
+            {/* Audio button for assistant messages */}
+            {msg.role === 'assistant' && msg.audioBase64 && (
+              <button
+                onClick={() => playMessageAudio(msg)}
+                className={cn(
+                  'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full transition-all duration-200',
+                  playingMessageId === msg.id
+                    ? 'text-white bg-primary shadow-md'
+                    : 'text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted border border-border/50'
+                )}
+              >
+                {playingMessageId === msg.id ? (
+                  <>
+                    <VolumeX className="h-3.5 w-3.5" />
+                    <span>Stop</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="h-3.5 w-3.5" />
+                    <span>🔊 Listen</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        ))}
+        {isLoading && (
+          <div className={cn('flex', isRTL ? 'justify-end' : 'justify-start')}>
+            <div className="bg-muted/80 border border-border/50 px-4 py-3 rounded-2xl rounded-bl-md text-sm text-muted-foreground flex items-center gap-3">
+              <div className="flex gap-1">
+                <span className="w-2 h-2 bg-primary/60 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-2 h-2 bg-primary/60 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-2 h-2 bg-primary/60 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+              <span>{t.floatingBot.thinking}</span>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input */}
+      <div className="px-4 py-4 border-t bg-gradient-to-t from-background to-background/80">
+        <div className="flex items-center gap-3">
+          {/* Voice Recording Button */}
+          <Button
+            size="icon"
+            variant="outline"
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={isLoading || isTranscribing}
+            className={cn(
+              'h-11 w-11 rounded-xl shrink-0 border-2 transition-all duration-300',
+              isRecording
+                ? 'bg-red-500 hover:bg-red-600 text-white border-red-500 animate-pulse shadow-lg shadow-red-500/30'
+                : 'hover:bg-muted hover:border-primary/50'
+            )}
+            title={isRecording ? 'Stop recording' : 'Voice recording'}
+            aria-label={isRecording ? 'Stop recording' : 'Voice recording'}
+          >
+            {isTranscribing ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : isRecording ? (
+              <Square className="h-5 w-5" />
+            ) : (
+              <Mic className="h-5 w-5" />
+            )}
+          </Button>
+
+          {/* Text Input */}
+          <div className="flex-1 relative">
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={isTranscribing ? 'Transcribing...' : t.floatingBot.askAnything}
+              aria-label="Type your message"
+              className={cn(
+                'w-full bg-muted/60 border-2 border-border/50 rounded-xl px-4 py-3 text-sm',
+                'focus:outline-none focus:ring-0 focus:border-primary/50 focus:bg-muted/80',
+                'placeholder:text-muted-foreground/70 transition-all duration-200',
+                isRTL && 'text-right'
+              )}
+              disabled={isLoading || isTranscribing}
+            />
+          </div>
+
+          {/* Send Button */}
+          <Button
+            size="icon"
+            onClick={handleSend}
+            disabled={!input.trim() || isLoading || isTranscribing}
+            className={cn(
+              'h-11 w-11 rounded-xl bg-gradient-to-br shrink-0 shadow-lg transition-all duration-300',
+              'hover:scale-105 hover:shadow-xl disabled:opacity-50 disabled:hover:scale-100',
+              teacher.gradient
+            )}
+            aria-label={language === 'ar' ? 'إرسال الرسالة' : 'Send message'}
+          >
+            <Send className={cn('h-5 w-5', isRTL && 'rotate-180')} />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}

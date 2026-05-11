@@ -1,0 +1,9 @@
+# 2YSTUDY - AI-Powered Professional Training Platform
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /dashboard
+Disallow: /admin
+Disallow: /super-admin
+
+Sitemap: https://estateiq-app.vercel.app/sitemap.xml

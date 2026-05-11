@@ -1,0 +1,438 @@
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { cn } from '@/lib/utils';
+import { quizApi } from '@/lib/api/quiz.api';
+import { adminApi, type Group } from '@/lib/api/admin.api';
+import type { QuizListItem } from '@/types/quiz';
+import {
+  Plus,
+  ClipboardCheck,
+  Eye,
+  Pencil,
+  Trash2,
+  Users,
+  UserPlus,
+  ToggleLeft,
+  ToggleRight,
+  HelpCircle,
+  Sparkles,
+  Clock,
+  Target,
+  Loader2,
+  AlertTriangle,
+  Check,
+  X,
+} from 'lucide-react';
+
+export default function AdminQuizzesPage() {
+  const { t, isRTL } = useLanguage();
+  const router = useRouter();
+  const [quizzes, setQuizzes] = useState<QuizListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [assignQuizId, setAssignQuizId] = useState<string | null>(null);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignResult, setAssignResult] = useState<string | null>(null);
+  const isDeleting = useRef(false);
+
+  const fetchQuizzes = async () => {
+    try {
+      setLoading(true);
+      const res = await quizApi.getAdminQuizzes();
+      setQuizzes(res.quizzes);
+    } catch (err) {
+      console.error('Failed to fetch quizzes:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchQuizzes(); }, []);
+
+  const handleTogglePublish = async (quizId: string, currentPublished: boolean) => {
+    setTogglingId(quizId);
+    try {
+      await quizApi.publishQuiz(quizId, !currentPublished);
+      setQuizzes((prev) =>
+        prev.map((q) => q.id === quizId ? { ...q, isPublished: !currentPublished } : q)
+      );
+    } catch (err) {
+      console.error('Failed to toggle publish:', err);
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  const handleDelete = async (quizId: string) => {
+    // Prevent double-click using ref (sync check) + state
+    if (isDeleting.current || deletingId) return;
+    isDeleting.current = true;
+
+    setDeletingId(quizId);
+    setShowDeleteConfirm(null); // Close dialog immediately to prevent re-click
+    try {
+      await quizApi.deleteQuiz(quizId);
+      setQuizzes((prev) => prev.filter((q) => q.id !== quizId));
+    } catch (err) {
+      console.error('Failed to delete quiz:', err);
+    } finally {
+      setDeletingId(null);
+      isDeleting.current = false;
+    }
+  };
+
+  const openAssignModal = async (quizId: string) => {
+    setAssignQuizId(quizId);
+    setSelectedGroupIds(new Set());
+    setAssignResult(null);
+    try {
+      const res = await adminApi.getGroups();
+      setGroups(res.groups);
+    } catch (err) {
+      console.error('Failed to fetch groups:', err);
+    }
+  };
+
+  const handleAssign = async () => {
+    if (!assignQuizId || selectedGroupIds.size === 0) return;
+    setAssignLoading(true);
+    setAssignResult(null);
+
+    let totalAdded = 0;
+    let totalSkipped = 0;
+
+    try {
+      for (const groupId of Array.from(selectedGroupIds)) {
+        const result = await quizApi.assignQuizzesToGroup(groupId, [assignQuizId]);
+        totalAdded += result.added;
+        totalSkipped += result.skipped;
+      }
+      setAssignResult(
+        totalSkipped > 0
+          ? `Assigned to ${totalAdded} group(s). ${totalSkipped} already assigned.`
+          : `Assigned to ${totalAdded} group(s) successfully.`
+      );
+      setSelectedGroupIds(new Set());
+    } catch (err) {
+      console.error('Failed to assign quiz:', err);
+      setAssignResult('Failed to assign quiz.');
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const toggleGroupSelection = (groupId: string) => {
+    setSelectedGroupIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
+
+  const getDifficultyColor = (difficulty: string) => {
+    switch (difficulty) {
+      case 'easy': return 'bg-green-100 text-green-700 border-green-200';
+      case 'medium': return 'bg-amber-100 text-amber-700 border-amber-200';
+      case 'hard': return 'bg-red-100 text-red-700 border-red-200';
+      default: return 'bg-gray-100 text-gray-700 border-gray-200';
+    }
+  };
+
+  const getDifficultyLabel = (difficulty: string) => {
+    switch (difficulty) {
+      case 'easy': return t.quiz.easy;
+      case 'medium': return t.quiz.medium;
+      case 'hard': return t.quiz.hard;
+      default: return difficulty;
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-8 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+        <div className="space-y-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-24 bg-gray-200 dark:bg-gray-700 rounded-xl animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+            <ClipboardCheck className="w-7 h-7 text-[#0089B8]" />
+            {t.quiz.manageQuizzes}
+          </h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">
+            {quizzes.length} {'quizzes'}
+          </p>
+        </div>
+        <Button
+          onClick={() => router.push('/admin/quizzes/create')}
+          className="bg-[#0089B8] hover:bg-[#0089B8]/90"
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          {t.quiz.createQuiz}
+        </Button>
+      </div>
+
+      {/* Quiz List */}
+      {quizzes.length === 0 ? (
+        <div className="text-center py-16">
+          <ClipboardCheck className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-500">{t.quiz.noQuizzesAvailable}</h3>
+          <p className="text-gray-400 mt-1">{'Get started by creating a new quiz'}</p>
+          <Button
+            onClick={() => router.push('/admin/quizzes/create')}
+            className="mt-4 bg-[#0089B8] hover:bg-[#0089B8]/90"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            {t.quiz.createQuiz}
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {quizzes.map((quiz) => (
+            <Card key={quiz.id} className="border border-gray-200 dark:border-gray-700 hover:shadow-md transition-all">
+              <CardContent className="p-5">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  {/* Left: Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* TEMPORARY: Arabic fields hidden — English only mode */}
+                      <h3 className="font-semibold text-gray-900 dark:text-white truncate">
+                        {quiz.title}
+                      </h3>
+                      <Badge className={cn('text-xs', getDifficultyColor(quiz.difficulty))}>
+                        {getDifficultyLabel(quiz.difficulty)}
+                      </Badge>
+                      <Badge variant={quiz.isPublished ? 'default' : 'secondary'}
+                        className={cn(
+                          'text-xs',
+                          quiz.isPublished
+                            ? 'bg-green-100 text-green-700 border-green-200'
+                            : 'bg-gray-100 text-gray-600 border-gray-200'
+                        )}
+                      >
+                        {quiz.isPublished ? t.quiz.published : t.quiz.draft}
+                      </Badge>
+                      {quiz.quizType === 'ai_generated' && (
+                        <Badge variant="outline" className="text-xs text-[#0089B8] border-[#0089B8]/20 bg-[#0089B8]/5">
+                          <Sparkles className="w-3 h-3 mr-1" />
+                          {t.quiz.aiGenerated}
+                        </Badge>
+                      )}
+                    </div>
+                    {/* TEMPORARY: Arabic fields hidden — English only mode */}
+                    <p className="text-sm text-gray-500 mt-1 line-clamp-1">
+                      {quiz.description}
+                    </p>
+                    <div className="flex flex-wrap gap-4 mt-2 text-xs text-gray-400">
+                      <span className="flex items-center gap-1">
+                        <HelpCircle className="w-3.5 h-3.5" />
+                        {quiz.questionCount} {t.quiz.questionCount}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Users className="w-3.5 h-3.5" />
+                        {quiz.attemptCount} {t.quiz.attemptCount}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Target className="w-3.5 h-3.5" />
+                        {t.quiz.passingScore}: {quiz.passingScore}%
+                      </span>
+                      {quiz.timeLimit && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5" />
+                          {quiz.timeLimit} {'min'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right: Actions */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleTogglePublish(quiz.id, quiz.isPublished)}
+                      disabled={togglingId === quiz.id}
+                    >
+                      {togglingId === quiz.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : quiz.isPublished ? (
+                        <ToggleRight className="w-4 h-4 text-green-500" />
+                      ) : (
+                        <ToggleLeft className="w-4 h-4 text-gray-400" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openAssignModal(quiz.id)}
+                      title="Assign to groups"
+                    >
+                      <UserPlus className="w-4 h-4 text-[#0089B8]" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => router.push(`/admin/quizzes/${quiz.id}/attempts`)}
+                    >
+                      <Users className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => router.push(`/admin/quizzes/${quiz.id}`)}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowDeleteConfirm(quiz.id)}
+                      className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Delete Confirm Dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-8 h-8 text-red-500" />
+                <h3 className="text-lg font-semibold">{t.quiz.confirmDelete}</h3>
+              </div>
+              <p className="text-gray-500">{t.quiz.confirmDeleteDesc}</p>
+              <div className="flex gap-3 justify-end">
+                <Button variant="outline" onClick={() => setShowDeleteConfirm(null)}>
+                  {t.common.cancel}
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => handleDelete(showDeleteConfirm)}
+                  disabled={deletingId === showDeleteConfirm}
+                >
+                  {deletingId === showDeleteConfirm ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4 mr-1" />
+                  )}
+                  {t.common.delete}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Assign to Groups Modal */}
+      {assignQuizId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-md max-h-[80vh] flex flex-col">
+            <CardContent className="p-6 space-y-4 overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <UserPlus className="w-6 h-6 text-[#0089B8]" />
+                  <h3 className="text-lg font-semibold">Assign to Groups</h3>
+                </div>
+                <button onClick={() => setAssignQuizId(null)} className="text-gray-400 hover:text-gray-600">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <p className="text-sm text-gray-500">
+                Select groups to assign this quiz to. Each student in the group will get exactly one instance.
+              </p>
+
+              {groups.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <Users className="w-10 h-10 mx-auto mb-2" />
+                  <p>No groups found</p>
+                </div>
+              ) : (
+                <div className="space-y-2 overflow-y-auto flex-1 pr-1">
+                  {groups.map((group) => (
+                    <button
+                      key={group.id}
+                      onClick={() => toggleGroupSelection(group.id)}
+                      className={cn(
+                        'w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all text-start',
+                        selectedGroupIds.has(group.id)
+                          ? 'border-[#0089B8] bg-[#0089B8]/5'
+                          : 'border-gray-200 hover:border-gray-300'
+                      )}
+                    >
+                      <div>
+                        <p className="font-medium text-gray-900 dark:text-white">{group.name}</p>
+                        <p className="text-xs text-gray-400">{group.memberCount} students</p>
+                      </div>
+                      {selectedGroupIds.has(group.id) && (
+                        <Check className="w-5 h-5 text-[#0089B8]" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {assignResult && (
+                <div className={cn(
+                  'text-sm p-3 rounded-lg',
+                  assignResult.includes('Failed')
+                    ? 'bg-red-50 text-red-600'
+                    : 'bg-green-50 text-green-600'
+                )}>
+                  {assignResult}
+                </div>
+              )}
+
+              <div className="flex gap-3 justify-end pt-2">
+                <Button variant="outline" onClick={() => setAssignQuizId(null)}>
+                  {t.common.cancel}
+                </Button>
+                <Button
+                  onClick={handleAssign}
+                  className="bg-[#0089B8] hover:bg-[#0089B8]/90"
+                  disabled={selectedGroupIds.size === 0 || assignLoading}
+                >
+                  {assignLoading ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <UserPlus className="w-4 h-4 mr-1" />
+                  )}
+                  Assign ({selectedGroupIds.size})
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}

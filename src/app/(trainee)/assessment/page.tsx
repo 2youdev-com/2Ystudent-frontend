@@ -1,0 +1,767 @@
+'use client';
+
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { useDiagnosticStore } from '@/stores/diagnostic.store';
+import { useTeacherStore } from '@/stores/teacher.store';
+import { useAuthStore } from '@/stores/auth.store';
+import { diagnosticApi, type EvaluatorReport } from '@/lib/api/diagnostic.api';
+import { cn } from '@/lib/utils';
+import type { SkillReport } from '@/types/diagnostic';
+import {
+  MessageSquare,
+  Phone,
+  Loader2,
+  CheckCircle,
+  ArrowRight,
+  ArrowLeft,
+  Sparkles,
+  Target,
+  TrendingUp,
+  TrendingDown,
+  SkipForward,
+  ClipboardCheck,
+  GraduationCap,
+  ChevronDown,
+  ChevronUp,
+  BookOpen,
+  Calendar,
+  Brain,
+  AlertTriangle,
+  Shield,
+} from 'lucide-react';
+
+export default function AssessmentPage() {
+  const router = useRouter();
+  const { t, isRTL, language } = useLanguage();
+  const store = useDiagnosticStore();
+  const { user } = useAuthStore();
+  const [report, setReport] = useState<SkillReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Evaluator state
+  const [evaluatorReport, setEvaluatorReport] = useState<EvaluatorReport | null>(null);
+  const [evaluatorStatus, setEvaluatorStatus] = useState<string>('pending');
+  const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'shortTerm' | 'mediumTerm' | 'longTerm'>('shortTerm');
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Progress state for completing phase
+  const [completingProgress, setCompletingProgress] = useState(0);
+  const [completingStep, setCompletingStep] = useState(0);
+
+  const ArrowIcon = isRTL ? ArrowLeft : ArrowRight;
+
+  // Completing phase steps
+  const completingSteps = [
+    'Analyzing your discussion...',
+    'Evaluating communication skills...',
+    'Evaluating technical knowledge...',
+    'Identifying strengths and weaknesses...',
+    'Selecting the best AI mentor for you...',
+    'Creating your personalized training plan...',
+  ];
+
+  // CRITICAL: Prevent user from leaving page during completing phase
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (store.assessmentPhase === 'completing') {
+        e.preventDefault();
+        e.returnValue = 'Assessment in progress! Leaving now may lose your data.';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [store.assessmentPhase, isRTL]);
+
+  // Progress animation for completing phase
+  useEffect(() => {
+    if (store.assessmentPhase === 'completing') {
+      setCompletingProgress(0);
+      setCompletingStep(0);
+
+      // Animate progress from 0 to 95 over 15 seconds
+      const progressInterval = setInterval(() => {
+        setCompletingProgress(prev => {
+          if (prev >= 95) return 95;
+          return prev + 1;
+        });
+      }, 150);
+
+      // Change step every 2.5 seconds
+      const stepInterval = setInterval(() => {
+        setCompletingStep(prev => (prev + 1) % completingSteps.length);
+      }, 2500);
+
+      return () => {
+        clearInterval(progressInterval);
+        clearInterval(stepInterval);
+      };
+    }
+  }, [store.assessmentPhase, completingSteps.length]);
+
+  // Poll for evaluator report
+  const pollEvaluatorReport = useCallback(async () => {
+    try {
+      const result = await diagnosticApi.getEvaluatorReport();
+      setEvaluatorStatus(result.evaluatorStatus);
+      if (result.evaluatorReport) {
+        setEvaluatorReport(result.evaluatorReport);
+        // Store assigned teacher in Zustand WITH userId to track ownership
+        if (result.evaluatorReport.teacherAssignment?.teacherName) {
+          const teacherStore = useTeacherStore.getState();
+          teacherStore.setAssignedTeacher(
+            result.evaluatorReport.teacherAssignment.teacherName as any
+          );
+          // CRITICAL: Also save the userId so GlobalAIBot knows this user completed assessment
+          if (user?.id) {
+            teacherStore.setUserId(user.id);
+          }
+        }
+        // Stop polling once completed
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
+      }
+    } catch {
+      // Silently fail polling — report may not exist yet
+    }
+  }, []);
+
+  // Start polling when we enter "done" phase
+  useEffect(() => {
+    if (store.assessmentPhase === 'done' && !evaluatorReport) {
+      // Initial fetch
+      pollEvaluatorReport();
+      // Poll every 3 seconds
+      pollingRef.current = setInterval(pollEvaluatorReport, 3000);
+    }
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [store.assessmentPhase, evaluatorReport, pollEvaluatorReport]);
+
+  // Auto-advance based on phase
+  useEffect(() => {
+    const phase = store.assessmentPhase;
+
+    if (phase === 'voice_pending') {
+      router.push('/voice-training?diagnostic=true');
+    } else if (phase === 'chat_pending') {
+      router.push('/simulation?diagnostic=true');
+    }
+  }, [store.assessmentPhase, router]);
+
+  // Auto-complete when chat is done (or skipped)
+  useEffect(() => {
+    if (store.assessmentPhase === 'chat_complete' && !report) {
+      handleComplete();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.assessmentPhase]);
+
+  const handleStart = async () => {
+    setError(null);
+    try {
+      await store.startAssessment();
+    } catch {
+      setError('Failed to start assessment. Please try again.');
+    }
+  };
+
+  const handleComplete = async () => {
+    setError(null);
+    try {
+      const result = await store.completeAssessment();
+      if (result) {
+        setReport(result);
+      }
+    } catch {
+      setError('Failed to generate report. Please try again.');
+    }
+  };
+
+  const handleContinueToDashboard = () => {
+    router.push('/dashboard');
+  };
+
+  const handleStartChat = () => {
+    useDiagnosticStore.setState({ assessmentPhase: 'chat_pending', skippedVoice: false });
+  };
+
+  const handleSkipChat = () => {
+    store.skipChat();
+  };
+
+  const getScoreColor = (score: number) => {
+    if (score >= 70) return 'text-green-500';
+    if (score >= 50) return 'text-amber-500';
+    return 'text-red-500';
+  };
+
+  const getScoreBarColor = (score: number) => {
+    if (score >= 70) return 'bg-green-500';
+    if (score >= 50) return 'bg-amber-500';
+    return 'bg-red-500';
+  };
+
+  const getLevelLabel = (level: string) => {
+    const labels: Record<string, string> = {
+      beginner: 'Beginner',
+      intermediate: 'Intermediate',
+      advanced: 'Advanced',
+    };
+    return labels[level] || level;
+  };
+
+  const getSkillLabel = (key: string) => {
+    const labels: Record<string, string> = {
+      communication: 'Technical Communication',
+      negotiation: 'Knowledge Depth',
+      objectionHandling: 'Problem Solving',
+      relationshipBuilding: 'Safety Awareness',
+      productKnowledge: 'Practical Application',
+      closingTechnique: 'Critical Thinking',
+    };
+    return labels[key] || key;
+  };
+
+  const getSkillLevelLabel = (level: string) => {
+    const key = level as keyof Pick<typeof t.diagnostic, 'weak' | 'developing' | 'competent' | 'strong' | 'excellent'>;
+    return t.diagnostic[key] || level;
+  };
+
+  const getSkillLevelColor = (level: string) => {
+    const colors: Record<string, string> = {
+      weak: 'text-red-500 bg-red-50 dark:bg-red-900/20',
+      developing: 'text-orange-500 bg-orange-50 dark:bg-orange-900/20',
+      competent: 'text-amber-500 bg-amber-50 dark:bg-amber-900/20',
+      strong: 'text-blue-500 bg-blue-50 dark:bg-blue-900/20',
+      excellent: 'text-green-500 bg-green-50 dark:bg-green-900/20',
+    };
+    return colors[level] || 'text-muted-foreground bg-muted';
+  };
+
+  const getTeacherColor = (name: string) => {
+    const colors: Record<string, string> = {
+      ahmed: 'from-blue-500 to-blue-600',
+      noura: 'from-[#0089B8] to-[#006d93]',
+      anas: 'from-blue-500 to-blue-600',
+    };
+    return colors[name] || 'from-primary to-primary';
+  };
+
+  const getTeacherInitial = (name: string) => {
+    return name[0]?.toUpperCase() || '?';
+  };
+
+  const bilingual = (obj: { ar: string; en: string } | undefined) => {
+    if (!obj) return '';
+    return obj.en;
+  };
+
+  // --- PHASE: Completing (loading) ---
+  if (store.assessmentPhase === 'completing') {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="w-full max-w-lg">
+          <Card className="border-2 border-primary/20 shadow-xl">
+            <CardContent className="p-8">
+              {/* Warning Banner */}
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-8">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0">
+                    <Shield className="h-6 w-6 text-amber-500" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-amber-600 dark:text-amber-400">
+                      ⚠️ Important Warning
+                    </p>
+                    <p className="text-sm text-amber-600/80 dark:text-amber-400/80">
+                      Do not leave this page or close the browser until the evaluation is complete
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Content */}
+              <div className="text-center space-y-6">
+                {/* Animated Icon */}
+                <div className="relative inline-flex">
+                  <div className="w-28 h-28 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
+                    <Brain className="h-14 w-14 text-primary animate-pulse" />
+                  </div>
+                  <div className="absolute -top-1 -right-1 animate-bounce">
+                    <Sparkles className="h-8 w-8 text-yellow-500" />
+                  </div>
+                  <div className="absolute -bottom-1 -left-1 animate-pulse delay-300">
+                    <Target className="h-6 w-6 text-blue-500" />
+                  </div>
+                </div>
+
+                {/* Title */}
+                <div>
+                  <h1 className="text-2xl font-bold text-foreground mb-2">
+                    Creating Your Personalized Assessment
+                  </h1>
+                  <p className="text-muted-foreground">
+                    AI is analyzing your performance in detail
+                  </p>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="space-y-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      Progress
+                    </span>
+                    <span className="font-semibold text-primary">{completingProgress}%</span>
+                  </div>
+                  <Progress value={completingProgress} className="h-3" />
+                </div>
+
+                {/* Current Step */}
+                <div className="bg-muted/50 rounded-lg p-4">
+                  <div className="flex items-center justify-center gap-3">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary flex-shrink-0" />
+                    <p className="text-sm font-medium text-foreground">
+                      {completingSteps[completingStep]}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Steps indicator */}
+                <div className="flex justify-center gap-2">
+                  {completingSteps.map((_, index) => (
+                    <div
+                      key={index}
+                      className={cn(
+                        "w-2 h-2 rounded-full transition-all duration-300",
+                        index === completingStep
+                          ? "bg-primary w-6"
+                          : index < completingStep
+                          ? "bg-primary/50"
+                          : "bg-muted-foreground/30"
+                      )}
+                    />
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Bottom hint */}
+          <p className="text-center text-xs text-muted-foreground mt-4">
+            This may take 10-30 seconds depending on connection quality
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // --- PHASE: Done (show results) ---
+  if (store.assessmentPhase === 'done' && (report || store.latestReport)) {
+    const displayReport = report || store.latestReport!;
+    return (
+      <div className="container mx-auto py-8 px-4 max-w-2xl">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 mb-4">
+            <CheckCircle className="h-8 w-8 text-green-500" />
+          </div>
+          <h1 className="text-2xl font-bold text-foreground mb-2">{t.diagnostic.reportReady}</h1>
+        </div>
+
+        {/* Overall Score */}
+        <Card className="mb-6">
+          <CardContent className="p-6 text-center">
+            <p className="text-sm text-muted-foreground mb-2">{t.diagnostic.overallScore}</p>
+            <div className={cn("text-5xl font-bold mb-2", getScoreColor(displayReport.overallScore))}>
+              {displayReport.overallScore}%
+            </div>
+            <p className="text-lg font-medium text-foreground">{getLevelLabel(displayReport.level)}</p>
+          </CardContent>
+        </Card>
+
+        {/* Teacher Assignment Card */}
+        {evaluatorReport?.teacherAssignment && (
+          <Card className="mb-6 overflow-hidden">
+            <div className={cn("h-2 bg-gradient-to-r", getTeacherColor(evaluatorReport.teacherAssignment.teacherName))} />
+            <CardContent className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <GraduationCap className="h-5 w-5 text-primary" />
+                <h3 className="font-semibold text-foreground">{t.diagnostic.assignedTeacher}</h3>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className={cn(
+                  "w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-xl bg-gradient-to-br",
+                  getTeacherColor(evaluatorReport.teacherAssignment.teacherName)
+                )}>
+                  {getTeacherInitial(evaluatorReport.teacherAssignment.teacherName)}
+                </div>
+                <div className="flex-1">
+                  <p className="text-lg font-semibold text-foreground">
+                    {bilingual(evaluatorReport.teacherAssignment.teacherDisplayName)}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {bilingual(evaluatorReport.teacherAssignment.teacherDescription)}
+                  </p>
+                </div>
+              </div>
+              <p className="mt-3 text-sm text-muted-foreground border-t pt-3">
+                {bilingual(evaluatorReport.teacherAssignment.assignmentReason)}
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Skill Scores */}
+        <Card className="mb-6">
+          <CardContent className="p-6 space-y-4">
+            <h3 className="font-semibold text-foreground">{t.diagnostic.skillProfile}</h3>
+            {Object.entries(displayReport.skillScores).map(([key, score]) => (
+              <div key={key}>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-muted-foreground">{getSkillLabel(key)}</span>
+                  <span className={cn("font-semibold", getScoreColor(score))}>{score}%</span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={cn("h-full rounded-full transition-all duration-700", getScoreBarColor(score))}
+                    style={{ width: `${score}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        {/* Strengths & Weaknesses */}
+        <div className="grid gap-4 md:grid-cols-2 mb-6">
+          <Card className="border-green-200 dark:border-green-800">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <TrendingUp className="h-5 w-5 text-green-500" />
+                <h4 className="font-semibold text-green-700 dark:text-green-400">
+                  Strengths
+                </h4>
+              </div>
+              <ul className="space-y-1.5">
+                {displayReport.strengths.map((s, i) => (
+                  <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
+                    <span className="text-green-500 mt-0.5">+</span>
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+          <Card className="border-red-200 dark:border-red-800">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <TrendingDown className="h-5 w-5 text-red-500" />
+                <h4 className="font-semibold text-red-700 dark:text-red-400">
+                  Areas to Improve
+                </h4>
+              </div>
+              <ul className="space-y-1.5">
+                {displayReport.weaknesses.map((w, i) => (
+                  <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
+                    <span className="text-red-500 mt-0.5">-</span>
+                    {w}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Evaluator Report Section - More Prominent */}
+        {evaluatorStatus !== 'completed' && evaluatorStatus !== 'failed' && (
+          <Card className="mb-6 border-2 border-primary/30 bg-primary/5">
+            <CardContent className="p-6">
+              <div className="flex flex-col items-center text-center space-y-4">
+                {/* Animated Icon */}
+                <div className="relative">
+                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Brain className="h-8 w-8 text-primary animate-pulse" />
+                  </div>
+                  <div className="absolute -top-1 -right-1">
+                    <Sparkles className="h-5 w-5 text-yellow-500 animate-bounce" />
+                  </div>
+                </div>
+                {/* Text */}
+                <div>
+                  <p className="text-base font-semibold text-foreground">{t.diagnostic.evaluatorGenerating}</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Generating detailed evaluation... Please do not leave this page
+                  </p>
+                </div>
+                {/* Loading Bar */}
+                <div className="w-full max-w-xs">
+                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <div className="h-full bg-primary rounded-full animate-pulse" style={{ width: '60%' }} />
+                  </div>
+                </div>
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Overall Narrative */}
+        {evaluatorReport?.overallNarrative && (
+          <Card className="mb-6">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <Brain className="h-5 w-5 text-primary" />
+                <h3 className="font-semibold text-foreground">{t.diagnostic.overallNarrative}</h3>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                {bilingual(evaluatorReport.overallNarrative)}
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Detailed Skill Analysis */}
+        {evaluatorReport?.skillAnalyses && evaluatorReport.skillAnalyses.length > 0 && (
+          <Card className="mb-6">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Target className="h-5 w-5 text-primary" />
+                <h3 className="font-semibold text-foreground">{t.diagnostic.detailedAnalysis}</h3>
+              </div>
+              <div className="space-y-2">
+                {evaluatorReport.skillAnalyses.map((skill) => (
+                  <div key={skill.skillName} className="border rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => setExpandedSkill(expandedSkill === skill.skillName ? null : skill.skillName)}
+                      className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-medium text-foreground">{getSkillLabel(skill.skillName)}</span>
+                        <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", getSkillLevelColor(skill.level))}>
+                          {getSkillLevelLabel(skill.level)}
+                        </span>
+                      </div>
+                      {expandedSkill === skill.skillName ? (
+                        <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </button>
+                    {expandedSkill === skill.skillName && (
+                      <div className="px-3 pb-3 space-y-3 border-t">
+                        <p className="text-sm text-muted-foreground pt-3">{bilingual(skill.analysis)}</p>
+                        {skill.improvementTips.length > 0 && (
+                          <div>
+                            <p className="text-xs font-semibold text-foreground mb-1.5">
+                              Tips for improvement:
+                            </p>
+                            <ul className="space-y-1">
+                              {skill.improvementTips.map((tip, i) => (
+                                <li key={i} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                                  <span className="text-primary mt-0.5">&#x2022;</span>
+                                  {bilingual(tip)}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Improvement Plan */}
+        {evaluatorReport?.improvementPlan && (
+          <Card className="mb-6">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Calendar className="h-5 w-5 text-primary" />
+                <h3 className="font-semibold text-foreground">{t.diagnostic.improvementPlan}</h3>
+              </div>
+              {/* Tabs */}
+              <div className="flex gap-1 mb-4 bg-muted rounded-lg p-1">
+                {(['shortTerm', 'mediumTerm', 'longTerm'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={cn(
+                      "flex-1 text-xs font-medium py-2 px-3 rounded-md transition-colors",
+                      activeTab === tab
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {t.diagnostic[tab]}
+                  </button>
+                ))}
+              </div>
+              {/* Tab Content */}
+              <ul className="space-y-2">
+                {evaluatorReport.improvementPlan[activeTab]?.map((item, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                    <BookOpen className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                    {bilingual(item)}
+                  </li>
+                ))}
+                {(!evaluatorReport.improvementPlan[activeTab] || evaluatorReport.improvementPlan[activeTab].length === 0) && (
+                  <p className="text-sm text-muted-foreground">
+                    No recommendations for this period
+                  </p>
+                )}
+              </ul>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Continue Button */}
+        <Button
+          className="w-full h-12 btn-gradient text-lg"
+          onClick={handleContinueToDashboard}
+        >
+          {t.diagnostic.continueToDashboard}
+          <ArrowIcon className={cn("h-5 w-5", isRTL ? "mr-2" : "ml-2")} />
+        </Button>
+      </div>
+    );
+  }
+
+  // --- PHASE: Voice Complete (show step 2 prompt - Chat is optional) ---
+  if (store.assessmentPhase === 'voice_complete') {
+    return (
+      <div className="container mx-auto py-8 px-4 max-w-2xl">
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-bold text-foreground mb-2">{t.diagnostic.assessmentGateway}</h1>
+          <p className="text-muted-foreground">{t.diagnostic.assessmentGatewayDesc}</p>
+        </div>
+
+        {/* Progress Steps */}
+        <div className="flex items-center justify-center gap-4 mb-8">
+          {/* Step 1 - Done (Voice Call) */}
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center">
+              <CheckCircle className="h-5 w-5 text-white" />
+            </div>
+            <span className="text-sm font-medium text-green-600 dark:text-green-400">{t.diagnostic.step1Title}</span>
+          </div>
+          <div className="w-12 h-0.5 bg-border" />
+          {/* Step 2 - Pending (Chat - Optional) */}
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
+              <span className="text-sm font-bold text-primary">2</span>
+            </div>
+            <span className="text-sm font-medium text-foreground">{t.diagnostic.step2Title}</span>
+          </div>
+        </div>
+
+        <Card className="mb-6">
+          <CardContent className="p-6">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+                <MessageSquare className="h-7 w-7 text-primary" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-foreground">{t.diagnostic.step2Title}</h3>
+                <p className="text-sm text-muted-foreground">{t.diagnostic.step2Desc}</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <Button className="flex-1 btn-gradient" onClick={handleStartChat}>
+                <MessageSquare className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
+                {t.diagnostic.continueAssessment}
+              </Button>
+              <Button variant="outline" onClick={handleSkipChat}>
+                <SkipForward className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
+                Skip Chat
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {error && (
+          <p className="text-sm text-destructive text-center">{error}</p>
+        )}
+      </div>
+    );
+  }
+
+  // --- PHASE: Idle (intro) ---
+  return (
+    <div className="container mx-auto py-8 px-4 max-w-2xl">
+      <div className="text-center mb-8">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
+          <ClipboardCheck className="h-8 w-8 text-primary" />
+        </div>
+        <h1 className="text-2xl font-bold text-foreground mb-2">{t.diagnostic.assessmentGateway}</h1>
+        <p className="text-muted-foreground">{t.diagnostic.assessmentGatewayDesc}</p>
+      </div>
+
+      {/* Steps Preview */}
+      <div className="space-y-4 mb-8">
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
+                <Phone className="h-6 w-6 text-primary" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs font-semibold text-primary">{t.diagnostic.stepOf} 1/2</span>
+                </div>
+                <h3 className="font-semibold text-foreground">{t.diagnostic.step1Title}</h3>
+                <p className="text-sm text-muted-foreground">{t.diagnostic.step1Desc}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
+                <MessageSquare className="h-6 w-6 text-primary" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs font-semibold text-primary">{t.diagnostic.stepOf} 2/2</span>
+                  <span className="text-xs text-muted-foreground">(optional)</span>
+                </div>
+                <h3 className="font-semibold text-foreground">{t.diagnostic.step2Title}</h3>
+                <p className="text-sm text-muted-foreground">{t.diagnostic.step2Desc}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Button
+        className="w-full h-12 btn-gradient text-lg"
+        onClick={handleStart}
+      >
+        {t.diagnostic.startAssessment}
+        <ArrowIcon className={cn("h-5 w-5", isRTL ? "mr-2" : "ml-2")} />
+      </Button>
+
+      {error && (
+        <p className="text-sm text-destructive text-center mt-4">{error}</p>
+      )}
+    </div>
+  );
+}

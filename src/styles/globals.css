@@ -1,0 +1,837 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   2YStudy - Professional Engineering Design System
+   ============================================ */
+
+@layer base {
+  :root {
+    /* ========================================
+       LIGHT MODE - Professional Engineering Palette
+       Deep navy + teal accent, clean and confident
+       ======================================== */
+
+    /* Base Colors */
+    --background: 210 20% 98%;           /* #F8FAFC - Soft gray background */
+    --foreground: 210 50% 14%;           /* #162B46 - Deep Navy text */
+
+    /* Cards */
+    --card: 0 0% 100%;                   /* #FFFFFF */
+    --card-foreground: 210 50% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 50% 14%;
+
+    /* Primary - Teal for engineering precision */
+    --primary: 195 100% 36%;             /* #0089B8 - Teal */
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary */
+    --secondary: 210 20% 95%;
+    --secondary-foreground: 210 50% 14%;
+
+    /* Muted */
+    --muted: 210 20% 94%;
+    --muted-foreground: 210 10% 40%;     /* #5C6670 */
+
+    /* Accent */
+    --accent: 210 20% 94%;
+    --accent-foreground: 210 50% 14%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders */
+    --border: 214 32% 82%;
+    --input: 214 32% 82%;
+    --ring: 195 100% 36%;                /* Teal ring */
+    --radius: 0.5rem;
+
+    /* Extended Colors */
+    --success: 160 84% 39%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+
+    /* Sidebar - Dark navy */
+    --sidebar-bg: 210 50% 14%;
+    --sidebar-border: 210 40% 20%;
+    --sidebar-item-hover: 210 40% 20%;
+    --sidebar-item-active: 195 100% 36%;
+
+    /* 2YStudy Brand Colors */
+    --ine-navy: 210 50% 14%;          /* #162B46 */
+    --ine-teal: 195 100% 36%;         /* #0089B8 */
+    --ine-slate: 215 16% 47%;         /* #64748B */
+  }
+
+  .dark {
+    /* ========================================
+       DARK MODE - Deep Navy Palette
+       ======================================== */
+
+    --background: 210 50% 8%;
+    --foreground: 210 40% 98%;
+
+    --card: 210 45% 14%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 210 45% 16%;
+    --popover-foreground: 210 40% 98%;
+
+    /* Primary - Brighter teal for dark mode */
+    --primary: 195 90% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 18%;
+    --secondary-foreground: 210 40% 95%;
+
+    --muted: 210 40% 16%;
+    --muted-foreground: 215 25% 65%;
+
+    --accent: 210 40% 20%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 63% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 210 35% 22%;
+    --input: 210 35% 18%;
+    --ring: 195 90% 50%;
+
+    /* Extended Colors for Dark Mode */
+    --success: 160 84% 50%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 0%;
+    --info: 199 89% 55%;
+    --info-foreground: 0 0% 100%;
+
+    /* Sidebar */
+    --sidebar-bg: 210 50% 10%;
+    --sidebar-border: 210 40% 18%;
+    --sidebar-item-hover: 210 40% 16%;
+    --sidebar-item-active: 195 90% 50%;
+
+    /* 2YStudy Brand Colors - Dark Mode */
+    --ine-navy: 210 50% 22%;
+    --ine-teal: 195 90% 50%;
+    --ine-slate: 215 25% 60%;
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ========================================
+     Edge Browser Compatibility Fixes
+     ======================================== */
+
+  /* Fix text gradient clipping in Edge */
+  .bg-clip-text {
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* RTL Support - Enhanced for Arabic with Cairo + Alexandria */
+  [dir="rtl"] {
+    text-align: right;
+    font-family: var(--font-cairo), 'Cairo', 'Noto Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+    letter-spacing: 0;
+    font-weight: 400;
+  }
+
+  /* Alexandria for headings globally */
+  h1, h2, h3, h4, h5, h6, .font-heading {
+    font-family: var(--font-alexandria), 'Alexandria', var(--font-cairo), 'Cairo', system-ui, sans-serif;
+  }
+
+  [dir="rtl"] h1,
+  [dir="rtl"] h2 {
+    font-family: var(--font-alexandria), 'Alexandria', var(--font-cairo), 'Cairo', sans-serif;
+    letter-spacing: 0;
+    line-height: 1.5;
+    font-weight: 700;
+  }
+
+  [dir="rtl"] h3,
+  [dir="rtl"] h4 {
+    font-family: var(--font-alexandria), 'Alexandria', var(--font-cairo), 'Cairo', sans-serif;
+    letter-spacing: 0;
+    line-height: 1.5;
+    font-weight: 600;
+  }
+
+  [dir="rtl"] h5,
+  [dir="rtl"] h6 {
+    letter-spacing: 0;
+    line-height: 1.6;
+    font-weight: 600;
+  }
+
+  [dir="rtl"] p,
+  [dir="rtl"] span,
+  [dir="rtl"] label,
+  [dir="rtl"] button {
+    line-height: 1.7;
+    letter-spacing: 0;
+  }
+
+  [dir="rtl"] small,
+  [dir="rtl"] .text-xs,
+  [dir="rtl"] .text-sm {
+    font-size: max(0.875rem, 14px);
+    line-height: 1.6;
+  }
+
+  [dir="rtl"] input,
+  [dir="rtl"] textarea,
+  [dir="rtl"] select {
+    font-family: var(--font-cairo), 'Cairo', 'Noto Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  [dir="rtl"] input::placeholder,
+  [dir="rtl"] textarea::placeholder {
+    font-family: var(--font-cairo), 'Cairo', 'Noto Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
+  }
+
+  [dir="ltr"] {
+    text-align: left;
+    font-family: var(--font-cairo), 'Cairo', 'Inter', system-ui, sans-serif;
+  }
+
+  /* Better Arabic Typography */
+  .arabic-text {
+    font-family: var(--font-cairo), 'Cairo', 'Noto Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+    letter-spacing: 0;
+  }
+
+  /* Focus styles for accessibility */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary/50 ring-offset-2 ring-offset-background;
+  }
+
+  /* Selection styling */
+  ::selection {
+    @apply bg-primary/20 text-foreground;
+  }
+
+  /* Premium Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/20 rounded-full;
+    transition: background-color 0.2s ease;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    @apply bg-white/10;
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/20;
+  }
+}
+
+@layer components {
+  /* Arabic font class */
+  .font-arabic {
+    font-family: var(--font-cairo), 'Cairo', 'Noto Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+  }
+
+  /* ========================================
+     Premium Card Styles - No borders, soft shadows
+     ======================================== */
+  .card-premium {
+    @apply bg-card rounded-2xl shadow-soft transition-all duration-300 border;
+    border-color: hsl(var(--border));
+  }
+
+  .card-premium:hover {
+    @apply shadow-soft-lg;
+  }
+
+  .dark .card-premium {
+    @apply bg-card backdrop-blur-xl border border-white/10;
+  }
+
+  .dark .card-premium:hover {
+    @apply border-white/20 shadow-lg shadow-primary/10;
+  }
+
+  /* Card hover effects */
+  .card-hover {
+    @apply transition-all duration-300;
+  }
+
+  .card-hover:hover {
+    @apply shadow-soft-lg -translate-y-0.5;
+  }
+
+  .dark .card-hover:hover {
+    @apply shadow-xl shadow-primary/5 border-primary/20;
+  }
+
+  /* ========================================
+     Glassmorphism Components (Dark Mode)
+     ======================================== */
+  .glass {
+    @apply bg-white/95 backdrop-blur-xl;
+  }
+
+  .dark .glass {
+    @apply bg-card backdrop-blur-xl border border-white/15;
+  }
+
+  .glass-sidebar {
+    @apply bg-sidebar-bg;
+  }
+
+  .dark .glass-sidebar {
+    @apply bg-sidebar-bg backdrop-blur-2xl border-r border-white/10;
+  }
+
+  /* ========================================
+     Gradient Text - 2YStudy Brand
+     ======================================== */
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary via-blue-400 to-cyan-400 bg-clip-text text-transparent;
+  }
+
+  .gradient-text-gold {
+    @apply bg-gradient-to-r from-amber-500 via-yellow-500 to-orange-500 bg-clip-text text-transparent;
+  }
+
+  .gradient-text-navy {
+    @apply bg-gradient-to-r from-slate-800 via-slate-700 to-slate-600 bg-clip-text text-transparent;
+  }
+
+  .dark .gradient-text-navy {
+    @apply from-slate-200 via-slate-300 to-slate-400;
+  }
+
+  /* ========================================
+     Navigation Styles
+     ======================================== */
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200;
+  }
+
+  .nav-item-inactive {
+    @apply text-muted-foreground hover:bg-primary/5 hover:text-foreground;
+  }
+
+  .nav-item-active {
+    @apply bg-primary/10 text-primary font-medium;
+  }
+
+  .dark .nav-item-active {
+    @apply bg-primary/15 shadow-glow;
+  }
+
+  /* ========================================
+     Premium Button Styles
+     ======================================== */
+  .btn-premium {
+    @apply bg-primary text-primary-foreground px-6 py-3 rounded-xl font-medium;
+    @apply shadow-soft hover:shadow-soft-lg transition-all duration-200;
+    @apply hover:bg-primary/90 active:scale-[0.98];
+  }
+
+  .btn-premium-outline {
+    @apply border-2 border-primary text-primary px-6 py-3 rounded-xl font-medium;
+    @apply hover:bg-primary hover:text-primary-foreground transition-all duration-200;
+    @apply active:scale-[0.98];
+  }
+
+  .btn-gradient {
+    @apply bg-gradient-to-r from-primary via-blue-500 to-cyan-500 text-white;
+    @apply px-6 py-3 rounded-xl font-medium shadow-soft;
+    @apply hover:shadow-soft-lg hover:opacity-90 transition-all duration-200;
+    @apply active:scale-[0.98];
+  }
+
+  /* Premium AI Feature Button - Glowing effect */
+  .btn-ai-premium {
+    @apply relative overflow-hidden bg-gradient-to-r from-primary via-blue-500 to-cyan-500;
+    @apply text-white px-6 py-3 rounded-xl font-medium;
+    @apply shadow-glow hover:shadow-glow-lg transition-all duration-300;
+  }
+
+  .btn-ai-premium::before {
+    content: '';
+    @apply absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent;
+    @apply -translate-x-full;
+    animation: shimmer 2s infinite;
+  }
+
+  /* ========================================
+     Form Input Styling - Premium
+     ======================================== */
+  .input-premium {
+    @apply flex h-12 w-full rounded-xl bg-background px-4 py-3 text-sm text-foreground;
+    @apply border ring-offset-background;
+    border-color: hsl(var(--border));
+    @apply placeholder:text-muted-foreground;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:border-primary/50;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
+    @apply transition-all duration-200;
+  }
+
+  .dark .input-premium {
+    @apply bg-white/5 ring-white/10;
+    @apply focus-visible:ring-primary/50 focus-visible:bg-white/10;
+  }
+
+  /* Select dropdown styling for dark mode */
+  select.input-premium {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.75rem center;
+    background-repeat: no-repeat;
+    background-size: 1.5em 1.5em;
+    padding-right: 2.5rem;
+  }
+
+  [dir="rtl"] select.input-premium {
+    background-position: left 0.75rem center;
+    padding-right: 1rem;
+    padding-left: 2.5rem;
+  }
+
+  select.input-premium {
+    @apply text-foreground;
+  }
+
+  select.input-premium option {
+    @apply bg-background text-foreground py-2;
+  }
+
+  .dark select.input-premium option {
+    background-color: hsl(222, 47%, 11%);
+    color: white;
+  }
+
+  /* Legacy form-input support */
+  .form-input {
+    @apply input-premium;
+  }
+
+  /* ========================================
+     Badge Variants - Premium
+     ======================================== */
+  .badge-premium {
+    @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-medium;
+    @apply transition-colors duration-200;
+  }
+
+  .badge-success {
+    @apply bg-success/10 text-success;
+  }
+
+  .badge-warning {
+    @apply bg-warning/10 text-warning;
+  }
+
+  .badge-info {
+    @apply bg-info/10 text-info;
+  }
+
+  .badge-emerald {
+    @apply bg-primary/10 text-primary;
+  }
+
+  .badge-gold {
+    @apply bg-amber-100 text-amber-700;
+  }
+
+  .dark .badge-gold {
+    @apply bg-amber-900/30 text-amber-400;
+  }
+
+  /* ========================================
+     Progress Bar - Premium
+     ======================================== */
+  .progress-bar {
+    @apply h-2 bg-muted/50 rounded-full overflow-hidden;
+  }
+
+  .progress-bar-fill {
+    @apply h-full bg-gradient-to-r from-primary to-blue-400 rounded-full;
+    @apply transition-all duration-500 ease-out;
+  }
+
+  /* ========================================
+     Stat Cards - Premium
+     ======================================== */
+  .stat-card {
+    @apply card-premium p-6;
+  }
+
+  .stat-card-icon {
+    @apply w-12 h-12 rounded-xl flex items-center justify-center;
+    @apply bg-gradient-to-br from-primary/10 to-blue-500/10;
+  }
+
+  .dark .stat-card-icon {
+    @apply from-primary/20 to-blue-500/20;
+  }
+
+  /* ========================================
+     Page Layout Components
+     ======================================== */
+  .page-header {
+    @apply mb-8;
+  }
+
+  .page-title {
+    @apply text-2xl md:text-3xl font-semibold text-foreground tracking-tight;
+  }
+
+  .page-description {
+    @apply text-muted-foreground mt-2 text-base;
+  }
+
+  .section-card {
+    @apply card-premium p-6 md:p-8;
+  }
+
+  .section-header {
+    @apply flex items-center justify-between mb-6 pb-4 border-b;
+    border-color: hsl(var(--border));
+  }
+
+  .section-title {
+    @apply text-lg font-semibold text-foreground flex items-center gap-3;
+  }
+
+  /* ========================================
+     RTL-aware utilities
+     ======================================== */
+  .ms-auto {
+    margin-inline-start: auto;
+  }
+
+  .me-auto {
+    margin-inline-end: auto;
+  }
+
+  .ps-4 {
+    padding-inline-start: 1rem;
+  }
+
+  .pe-4 {
+    padding-inline-end: 1rem;
+  }
+
+  /* ========================================
+     Skeleton Loading - Premium
+     ======================================== */
+  .skeleton {
+    @apply animate-pulse bg-muted/60 rounded-xl;
+  }
+
+  .dark .skeleton {
+    @apply bg-white/5;
+  }
+
+  /* Waveform animation */
+  .waveform-bar {
+    @apply transition-all duration-75;
+  }
+
+  /* Engineering specific components - Legacy support */
+  .re-highlight {
+    @apply bg-gradient-to-r from-primary/10 to-blue-500/10 rounded-xl p-4 border border-primary/20;
+  }
+
+  .re-score-card {
+    @apply bg-gradient-to-br from-primary/10 via-transparent to-blue-500/5 rounded-2xl p-6 border border-primary/20;
+  }
+}
+
+@layer utilities {
+  /* ========================================
+     Animation Utilities
+     ======================================== */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.4s ease-out;
+  }
+
+  .animate-slide-down {
+    animation: slideDown 0.4s ease-out;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.3s ease-out;
+  }
+
+  .animate-fade-in-up {
+    animation: fadeInUp 0.5s ease-out forwards;
+  }
+
+  .animate-fade-in-up-delayed {
+    animation: fadeInUp 0.5s ease-out forwards;
+    animation-delay: 0.1s;
+    opacity: 0;
+  }
+
+  .animate-fade-in-up-delayed-2 {
+    animation: fadeInUp 0.5s ease-out forwards;
+    animation-delay: 0.2s;
+    opacity: 0;
+  }
+
+  .animate-fade-in-up-delayed-3 {
+    animation: fadeInUp 0.5s ease-out forwards;
+    animation-delay: 0.3s;
+    opacity: 0;
+  }
+
+  .animate-scale-in-center {
+    animation: scaleInCenter 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes slideDown {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes scaleInCenter {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* Shimmer animation */
+  .animate-shimmer {
+    animation: shimmer 2s linear infinite;
+    background-size: 200% 100%;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  /* Geometric pattern overlay */
+  .auth-pattern {
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  /* ========================================
+     Theme Transitions
+     ======================================== */
+  .theme-transition {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  /* ========================================
+     Text Utilities
+     ======================================== */
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .arabic-spacing {
+    word-spacing: 0.05em;
+    letter-spacing: 0;
+    line-height: 1.9;
+  }
+
+  /* ========================================
+     Scrollbar Utilities
+     ======================================== */
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* ========================================
+     Focus Ring Animation
+     ======================================== */
+  .input-focus-ring {
+    position: relative;
+  }
+
+  .input-focus-ring::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: 0.875rem;
+    background: linear-gradient(45deg, hsl(160, 84%, 39%), hsl(160, 84%, 50%), hsl(160, 84%, 39%));
+    opacity: 0;
+    z-index: -1;
+    transition: opacity 0.3s ease;
+  }
+
+  .input-focus-ring:focus-within::after {
+    opacity: 0.5;
+    animation: pulse-ring 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-ring {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.6; }
+  }
+
+  /* Subtle bounce animation for floating buttons */
+  .animate-bounce-subtle {
+    animation: bounce-subtle 2s ease-in-out infinite;
+  }
+
+  @keyframes bounce-subtle {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-4px);
+    }
+  }
+
+  /* Subtle bounce for avatar during active call */
+  .animate-subtle-bounce {
+    animation: subtle-bounce 1.5s ease-in-out infinite;
+  }
+
+  @keyframes subtle-bounce {
+    0%, 100% {
+      transform: scale(1) translateY(0);
+    }
+    50% {
+      transform: scale(1.02) translateY(-2px);
+    }
+  }
+
+  /* Shadow glow animations for violet/teal buttons */
+  .shadow-glow-violet {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+  }
+
+  .shadow-glow-teal {
+    box-shadow: 0 0 20px rgba(20, 184, 166, 0.3);
+  }
+}
+
+/* ============================================
+   Utility Styles
+   ============================================ */
+
+/* Premium shadow utilities */
+.shadow-soft {
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.05), 0 4px 16px -4px rgba(0, 0, 0, 0.08);
+}
+
+.shadow-soft-lg {
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.08), 0 8px 32px -8px rgba(0, 0, 0, 0.12);
+}
+
+.shadow-glow {
+  box-shadow: 0 0 20px rgba(0, 137, 184, 0.15), 0 0 40px rgba(0, 137, 184, 0.05);
+}
+
+.shadow-glow-lg {
+  box-shadow: 0 0 30px rgba(0, 137, 184, 0.25), 0 0 60px rgba(0, 137, 184, 0.1);
+}
+
+/* Section divider */
+.section-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, hsl(var(--border)), transparent);
+}
+
+/* Skeleton loading shimmer */
+.skeleton-shimmer {
+  background: linear-gradient(90deg,
+    hsl(var(--muted)) 0%,
+    hsl(var(--muted) / 0.5) 50%,
+    hsl(var(--muted)) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Typing cursor */
+.typing-cursor::after {
+  content: '|';
+  animation: cursorBlink 1s step-end infinite;
+}
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Tabular number display */
+.stat-number {
+  font-variant-numeric: tabular-nums;
+}
+
+
+
+
+
+

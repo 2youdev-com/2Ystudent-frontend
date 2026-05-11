@@ -1,0 +1,938 @@
+'use client';
+
+/**
+ * AI Teachers Management Page
+ *
+ * Allows org admins to manage AI teachers:
+ * - View all teachers in a grid
+ * - Create new teachers
+ * - Edit teacher details, prompts, voice
+ * - View assigned students and documents
+ */
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Switch } from '@/components/ui/switch';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuthStore } from '@/stores/auth.store';
+import { useTeacherStore } from '@/stores/teacher.store';
+import { useDiagnosticStore } from '@/stores/diagnostic.store';
+import { cn } from '@/lib/utils';
+import { aiTeachersApi, AITeacher, CreateAITeacherData } from '@/lib/api/ai-teachers.api';
+import {
+  Bot,
+  Plus,
+  Users,
+  FileText,
+  Loader2,
+  AlertCircle,
+  GraduationCap,
+  Target,
+  Brain,
+  Star,
+  Sparkles,
+  ChevronRight,
+  ChevronLeft,
+  RefreshCcw,
+  Trash2,
+  Upload,
+  Camera,
+  ImagePlus,
+} from 'lucide-react';
+
+// Personality configuration
+const PERSONALITIES = {
+  friendly: {
+    label: { ar: 'ودود', en: 'Friendly' },
+    color: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+    icon: GraduationCap
+  },
+  challenging: {
+    label: { ar: 'متحدي', en: 'Challenging' },
+    color: 'bg-[#0089B8]/10 text-[#0089B8] border-[#0089B8]/20',
+    icon: Target
+  },
+  professional: {
+    label: { ar: 'احترافي', en: 'Professional' },
+    color: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+    icon: Brain
+  },
+  wise: {
+    label: { ar: 'حكيم', en: 'Wise' },
+    color: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+    icon: Star
+  },
+};
+
+// Level configuration
+const LEVELS = {
+  beginner: { label: { ar: 'مبتدئ', en: 'Beginner' }, color: 'bg-green-500/10 text-green-500' },
+  intermediate: { label: { ar: 'متوسط', en: 'Intermediate' }, color: 'bg-blue-500/10 text-blue-500' },
+  advanced: { label: { ar: 'متقدم', en: 'Advanced' }, color: 'bg-[#0089B8]/10 text-[#0089B8]' },
+  professional: { label: { ar: 'محترف', en: 'Professional' }, color: 'bg-amber-500/10 text-amber-500' },
+  general: { label: { ar: 'عام', en: 'General' }, color: 'bg-gray-500/10 text-gray-500' },
+};
+
+/**
+ * Convert image to WebP format for smaller file size
+ * Uses Canvas API to compress and convert images
+ */
+async function convertToWebP(file: File, maxWidth = 512, quality = 0.85): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    img.onload = () => {
+      // Calculate new dimensions (max 512x512 for avatars)
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxWidth || height > maxWidth) {
+        if (width > height) {
+          height = (height / width) * maxWidth;
+          width = maxWidth;
+        } else {
+          width = (width / height) * maxWidth;
+          height = maxWidth;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      if (!ctx) {
+        reject(new Error('Failed to get canvas context'));
+        return;
+      }
+
+      // Draw image on canvas
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // Convert to WebP blob
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error('Failed to convert image'));
+            return;
+          }
+
+          // Create new file with WebP extension
+          const webpFile = new File(
+            [blob],
+            file.name.replace(/\.[^.]+$/, '.webp'),
+            { type: 'image/webp' }
+          );
+
+          console.log(`Image converted: ${file.size} bytes → ${webpFile.size} bytes (${Math.round((1 - webpFile.size / file.size) * 100)}% smaller)`);
+          resolve(webpFile);
+        },
+        'image/webp',
+        quality
+      );
+    };
+
+    img.onerror = () => reject(new Error('Failed to load image'));
+
+    // Load image from file
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// Gradient colors for teacher avatars
+const GRADIENTS = [
+  'from-blue-500 to-blue-600',
+  'from-[#0089B8] to-[#0089B8]',
+  'from-blue-500 to-blue-600',
+  'from-amber-500 to-orange-500',
+  'from-pink-500 to-rose-500',
+  'from-[#0089B8] to-[#0089B8]',
+];
+
+export default function AITeachersPage() {
+  const { isRTL, language } = useLanguage();
+  const { token } = useAuthStore();
+  const router = useRouter();
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  const [teachers, setTeachers] = useState<AITeacher[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [isSeedingMissing, setIsSeedingMissing] = useState(false);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [newTeacher, setNewTeacher] = useState<CreateAITeacherData>({
+    name: '',
+    displayNameAr: '',
+    displayNameEn: '',
+    descriptionAr: '',
+    descriptionEn: '',
+    personality: 'friendly',
+    level: 'general',
+    voiceId: '',
+    systemPromptAr: '',
+    systemPromptEn: '',
+    welcomeMessageAr: '',
+    welcomeMessageEn: '',
+    brainQueryPrefix: '',
+    contextSource: 'brain',
+  });
+
+  // State for avatars (loaded separately for performance)
+  const [avatars, setAvatars] = useState<Record<string, string | null>>({});
+  const [avatarsLoading, setAvatarsLoading] = useState(false);
+
+  // Fetch teachers (fast - without avatars)
+  const fetchTeachers = useCallback(async () => {
+    if (!token) return;
+
+    try {
+      setIsLoading(true);
+      setError(null);
+      const data = await aiTeachersApi.list();
+      setTeachers(data.teachers);
+
+      // Load avatars in background after data is displayed
+      // Note: Backend auto-syncs DiceBear avatars to static images
+      setAvatarsLoading(true);
+      aiTeachersApi.getAvatars()
+        .then((res) => setAvatars(res.avatars))
+        .catch((err) => console.error('Error loading avatars:', err))
+        .finally(() => setAvatarsLoading(false));
+    } catch (err) {
+      console.error('Error fetching teachers:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load teachers');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    fetchTeachers();
+  }, [fetchTeachers]);
+
+  // Toggle teacher active status
+  const handleToggleActive = async (teacher: AITeacher) => {
+    try {
+      await aiTeachersApi.update(teacher.id, { isActive: !teacher.isActive });
+      setTeachers(prev =>
+        prev.map(t => t.id === teacher.id ? { ...t, isActive: !t.isActive } : t)
+      );
+    } catch (err) {
+      console.error('Error toggling teacher status:', err);
+    }
+  };
+
+  // Handle avatar file selection with WebP conversion
+  const handleAvatarSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      try {
+        // Convert to WebP for smaller file size
+        const webpFile = await convertToWebP(file, 512, 0.85);
+        setAvatarFile(webpFile);
+        // Create preview URL from converted file
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setAvatarPreview(reader.result as string);
+        };
+        reader.readAsDataURL(webpFile);
+      } catch (conversionError) {
+        console.warn('WebP conversion failed, using original:', conversionError);
+        // Fall back to original file
+        setAvatarFile(file);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setAvatarPreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  };
+
+  // Create new teacher
+  const handleCreateTeacher = async () => {
+    if (!newTeacher.name || !newTeacher.displayNameEn) {
+      return;
+    }
+
+    try {
+      setIsCreating(true);
+      const data = await aiTeachersApi.create(newTeacher);
+
+      // If avatar file was selected, upload it
+      if (avatarFile && data.teacher.id) {
+        try {
+          const updatedTeacher = await aiTeachersApi.uploadAvatar(data.teacher.id, avatarFile);
+          setTeachers(prev => [...prev, updatedTeacher.teacher]);
+        } catch (avatarErr) {
+          console.error('Error uploading avatar:', avatarErr);
+          // Still add teacher without avatar
+          setTeachers(prev => [...prev, data.teacher]);
+        }
+      } else {
+        setTeachers(prev => [...prev, data.teacher]);
+      }
+
+      setCreateDialogOpen(false);
+      setNewTeacher({
+        name: '',
+        displayNameAr: '',
+        displayNameEn: '',
+        personality: 'friendly',
+        level: 'general',
+      });
+      setAvatarFile(null);
+      setAvatarPreview(null);
+      // Navigate to the new teacher's page
+      router.push(`/admin/ai-teachers/${data.teacher.id}`);
+    } catch (err) {
+      console.error('Error creating teacher:', err);
+      setError(err instanceof Error ? err.message : 'Failed to create teacher');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  // Reset all evaluations
+  const handleResetEvaluations = async () => {
+    try {
+      setIsResetting(true);
+      const result = await aiTeachersApi.resetEvaluations();
+      console.log('Reset result:', result);
+
+      // IMPORTANT: Also reset local stores so students are forced to do new assessment
+      // Reset teacher store (clears assigned teacher from localStorage)
+      useTeacherStore.getState().reset();
+      // Reset diagnostic store (clears assessment state from sessionStorage)
+      useDiagnosticStore.getState().reset();
+
+      setResetDialogOpen(false);
+      // Refresh teachers to update counts
+      await fetchTeachers();
+    } catch (err) {
+      console.error('Error resetting evaluations:', err);
+      setError(err instanceof Error ? err.message : 'Failed to reset evaluations');
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
+  // Seed missing default teachers
+  const handleSeedMissing = async () => {
+    try {
+      setIsSeedingMissing(true);
+      const result = await aiTeachersApi.seedMissing();
+      console.log('Seed missing result:', result);
+
+      if (result.createdCount > 0) {
+        // Refresh teachers to show newly added ones
+        await fetchTeachers();
+      }
+    } catch (err) {
+      console.error('Error seeding missing teachers:', err);
+      setError(err instanceof Error ? err.message : 'Failed to seed missing teachers');
+    } finally {
+      setIsSeedingMissing(false);
+    }
+  };
+
+  // Get gradient for teacher
+  const getGradient = (index: number) => GRADIENTS[index % GRADIENTS.length];
+
+  // Get personality config
+  const getPersonality = (key: string) => PERSONALITIES[key as keyof typeof PERSONALITIES] || PERSONALITIES.friendly;
+
+  // Get level config
+  const getLevel = (key: string) => LEVELS[key as keyof typeof LEVELS] || LEVELS.general;
+
+  // RTL-aware chevron
+  const ChevronIcon = isRTL ? ChevronLeft : ChevronRight;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-[#0089B8]" />
+          <p className="text-sm text-muted-foreground">
+            {'Loading...'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <AlertCircle className="h-12 w-12 text-destructive" />
+          <p className="text-lg font-medium text-destructive">{error}</p>
+          <Button onClick={fetchTeachers} variant="outline">
+            {'Try Again'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#0089B8] flex items-center justify-center">
+              <Bot className="h-5 w-5 text-white" />
+            </div>
+            {'AI Teachers'}
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            {'Manage AI teachers and customize them for your students'}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Show seed missing button only when there are fewer than 5 teachers */}
+          {teachers.length < 5 && (
+            <Button
+              variant="outline"
+              onClick={handleSeedMissing}
+              disabled={isSeedingMissing}
+              className="text-blue-600 border-blue-500/30 hover:bg-blue-500/10"
+            >
+              {isSeedingMissing ? (
+                <Loader2 className={cn("h-4 w-4 animate-spin", isRTL ? "ml-2" : "mr-2")} />
+              ) : (
+                <Sparkles className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
+              )}
+              {'Add Default Teachers'}
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => setResetDialogOpen(true)}
+            className="text-destructive border-destructive/30 hover:bg-destructive/10"
+          >
+            <RefreshCcw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
+            {'Reset Evaluations'}
+          </Button>
+          <Button
+            onClick={() => setCreateDialogOpen(true)}
+            className="bg-[#0089B8] hover:bg-[#0089B8]/90"
+          >
+            <Plus className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
+            {'Add Teacher'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <Card className="border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#0089B8]/10 flex items-center justify-center">
+                <Bot className="h-5 w-5 text-[#0089B8]" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{teachers.length}</p>
+                <p className="text-xs text-muted-foreground">
+                  {'Total Teachers'}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
+                <Sparkles className="h-5 w-5 text-blue-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{teachers.filter(t => t.isActive).length}</p>
+                <p className="text-xs text-muted-foreground">
+                  {'Active'}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
+                <Users className="h-5 w-5 text-blue-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">
+                  {teachers.reduce((sum, t) => sum + (t._count?.assignedStudents || 0), 0)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {'Assigned Students'}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                <FileText className="h-5 w-5 text-amber-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">
+                  {teachers.reduce((sum, t) => sum + (t._count?.documents || 0), 0)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {'Linked Documents'}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Teachers Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {teachers.map((teacher, index) => {
+          const personality = getPersonality(teacher.personality);
+          const level = getLevel(teacher.level);
+          const PersonalityIcon = personality.icon;
+
+          return (
+            <Card
+              key={teacher.id}
+              className={cn(
+                "group cursor-pointer transition-all duration-200 hover:shadow-lg hover:border-[#0089B8]/30",
+                !teacher.isActive && "opacity-60"
+              )}
+              onClick={() => router.push(`/admin/ai-teachers/${teacher.id}`)}
+            >
+              <CardContent className="p-5">
+                {/* Header with Avatar and Status */}
+                <div className="flex items-start justify-between mb-4">
+                  <div className="h-16 w-16 rounded-full border-2 border-border shadow-soft overflow-hidden flex items-center justify-center">
+                    {/* Use avatars state (lazy loaded) or fallback to teacher.avatarUrl */}
+                    {(avatars[teacher.id] || teacher.avatarUrl) ? (
+                      <img
+                        src={avatars[teacher.id] || teacher.avatarUrl || ''}
+                        alt={teacher.displayNameEn}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : avatarsLoading ? (
+                      <div className={cn(
+                        "h-full w-full flex items-center justify-center text-white text-xl font-bold bg-gradient-to-br animate-pulse",
+                        getGradient(index)
+                      )}>
+                        {teacher.displayNameEn.charAt(0)}
+                      </div>
+                    ) : (
+                      <div className={cn(
+                        "h-full w-full flex items-center justify-center text-white text-xl font-bold bg-gradient-to-br",
+                        getGradient(index)
+                      )}>
+                        {teacher.displayNameEn.charAt(0)}
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    className="flex items-center gap-2"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Switch
+                      checked={teacher.isActive}
+                      onCheckedChange={() => handleToggleActive(teacher)}
+                      className="data-[state=checked]:bg-blue-500"
+                    />
+                  </div>
+                </div>
+
+                  {/* Name and Description */}
+                  <div className="mb-3">
+                    <h3 className="text-lg font-semibold text-foreground group-hover:text-[#0089B8] transition-colors">
+                      {teacher.displayNameEn}
+                    </h3>
+                    <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
+                      {teacher.descriptionEn}
+                    </p>
+                  </div>
+
+                  {/* Badges */}
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    <Badge variant="outline" className={cn("text-xs", personality.color)}>
+                      <PersonalityIcon className="h-3 w-3 mr-1" />
+                      {personality.label.en}
+                    </Badge>
+                    <Badge variant="outline" className={cn("text-xs", level.color)}>
+                      {level.label.en}
+                    </Badge>
+                    {teacher.isDefault && (
+                      <Badge variant="outline" className="text-xs bg-[#0089B8]/10 text-[#0089B8] border-[#0089B8]/20">
+                        {'Default'}
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Stats */}
+                  <div className="flex items-center justify-between pt-3 border-t border-border">
+                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                      <Users className="h-4 w-4" />
+                      <span>{teacher._count?.assignedStudents || 0}</span>
+                      <span className="text-xs">{'students'}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                      <FileText className="h-4 w-4" />
+                      <span>{teacher._count?.documents || 0}</span>
+                      <span className="text-xs">{'docs'}</span>
+                    </div>
+                    <ChevronIcon className="h-4 w-4 text-muted-foreground group-hover:text-[#0089B8] transition-colors" />
+                  </div>
+                </CardContent>
+              </Card>
+          );
+        })}
+
+        {/* Add New Teacher Card */}
+        <Card
+          className="group cursor-pointer border-dashed border-2 hover:border-[#0089B8]/50 transition-all duration-200"
+          onClick={() => setCreateDialogOpen(true)}
+        >
+          <CardContent className="p-5 flex flex-col items-center justify-center min-h-[280px] text-center">
+            <div className="w-16 h-16 rounded-2xl bg-[#0089B8]/10 flex items-center justify-center mb-4 group-hover:bg-[#0089B8]/20 transition-colors">
+              <Plus className="h-8 w-8 text-[#0089B8]" />
+            </div>
+            <h3 className="text-lg font-semibold text-foreground mb-1">
+              {'Add New Teacher'}
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {'Create a custom AI teacher'}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Reset Evaluations Confirmation Dialog */}
+      <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <RefreshCcw className="h-5 w-5" />
+              {'Reset All Evaluations'}
+            </DialogTitle>
+            <DialogDescription>
+              {'This action will delete all student evaluations and teacher assignments. Every student will need to be re-evaluated.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4">
+              <p className="text-sm text-destructive font-medium mb-2">
+                {'This will delete:'}
+              </p>
+              <ul className={cn("text-sm text-muted-foreground space-y-1", isRTL ? "list-disc pr-5" : "list-disc pl-5")}>
+                <li>All teacher assignments</li>
+                <li>Current skill levels</li>
+                <li>Daily skill reports</li>
+                <li>Diagnostic sessions</li>
+              </ul>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetDialogOpen(false)}>
+              {'Cancel'}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleResetEvaluations}
+              disabled={isResetting}
+            >
+              {isResetting ? (
+                <>
+                  <Loader2 className={cn("h-4 w-4 animate-spin", isRTL ? "ml-2" : "mr-2")} />
+                  {'Resetting...'}
+                </>
+              ) : (
+                <>
+                  <Trash2 className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
+                  {'Reset All'}
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Teacher Dialog - Enhanced with all fields */}
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bot className="h-5 w-5 text-[#0089B8]" />
+              {'Add New Teacher'}
+            </DialogTitle>
+            <DialogDescription>
+              {'Enter all details for the new teacher to fully customize it'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[60vh] pr-4">
+            <Tabs defaultValue="basic" className="w-full">
+              <TabsList className="grid w-full grid-cols-3 mb-4">
+                <TabsTrigger value="basic">Basic</TabsTrigger>
+                <TabsTrigger value="prompts">Prompts</TabsTrigger>
+                <TabsTrigger value="advanced">Advanced</TabsTrigger>
+              </TabsList>
+
+              {/* Basic Tab */}
+              <TabsContent value="basic" className="space-y-4">
+                {/* Avatar Upload Section */}
+                <div className="flex items-center gap-4 p-4 rounded-lg bg-muted/50">
+                  <div className="relative group">
+                    <Avatar className="h-20 w-20 border-2 border-border">
+                      {avatarPreview ? (
+                        <AvatarImage src={avatarPreview} alt="Preview" />
+                      ) : null}
+                      <AvatarFallback className="text-white text-2xl font-bold bg-[#0089B8]">
+                        {newTeacher.displayNameEn?.charAt(0) || '?'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <button
+                      type="button"
+                      onClick={() => avatarInputRef.current?.click()}
+                      className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Camera className="h-6 w-6 text-white" />
+                    </button>
+                    <input
+                      ref={avatarInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={handleAvatarSelect}
+                      className="hidden"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <Label className="text-base font-medium">Teacher Avatar</Label>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {'Click the image to upload a custom avatar'}
+                    </p>
+                    {avatarFile && (
+                      <p className="text-xs text-blue-500 mt-1">
+                        ✓ {avatarFile.name}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* TEMPORARY: Arabic fields hidden — English only mode */}
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="space-y-2">
+                    <Label>Name *</Label>
+                    <Input
+                      value={newTeacher.displayNameEn}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewTeacher(prev => ({
+                          ...prev,
+                          displayNameEn: val,
+                          displayNameAr: val,
+                          name: val.toLowerCase().replace(/\s+/g, '-'),
+                        }));
+                      }}
+                      placeholder="e.g., Sarah"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Identifier (system) *</Label>
+                  <Input
+                    value={newTeacher.name}
+                    onChange={(e) => setNewTeacher(prev => ({ ...prev, name: e.target.value.toLowerCase().replace(/\s+/g, '-') }))}
+                    placeholder="e.g., sarah"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {'Lowercase letters, no spaces'}
+                  </p>
+                </div>
+
+                {/* TEMPORARY: Arabic fields hidden — English only mode */}
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="space-y-2">
+                    <Label>Description</Label>
+                    <Textarea
+                      value={newTeacher.descriptionEn || ''}
+                      onChange={(e) => setNewTeacher(prev => ({ ...prev, descriptionEn: e.target.value, descriptionAr: e.target.value }))}
+                      placeholder="Short description..."
+                      rows={2}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Personality</Label>
+                    <Select
+                      value={newTeacher.personality}
+                      onValueChange={(value) => setNewTeacher(prev => ({ ...prev, personality: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(PERSONALITIES).map(([key, val]) => (
+                          <SelectItem key={key} value={key}>
+                            {val.label.en}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Level</Label>
+                    <Select
+                      value={newTeacher.level}
+                      onValueChange={(value) => setNewTeacher(prev => ({ ...prev, level: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(LEVELS).map(([key, val]) => (
+                          <SelectItem key={key} value={key}>
+                            {val.label.en}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </TabsContent>
+
+              {/* Prompts Tab */}
+              {/* TEMPORARY: Arabic fields hidden — English only mode */}
+              <TabsContent value="prompts" className="space-y-4">
+                <div className="space-y-2">
+                  <Label>System Prompt</Label>
+                  <Textarea
+                    value={newTeacher.systemPromptEn || ''}
+                    onChange={(e) => setNewTeacher(prev => ({ ...prev, systemPromptEn: e.target.value, systemPromptAr: e.target.value }))}
+                    placeholder="Enter system instructions..."
+                    rows={5}
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Welcome Message</Label>
+                  <Textarea
+                    value={newTeacher.welcomeMessageEn || ''}
+                    onChange={(e) => setNewTeacher(prev => ({ ...prev, welcomeMessageEn: e.target.value, welcomeMessageAr: e.target.value }))}
+                    placeholder="Welcome message..."
+                    rows={2}
+                  />
+                </div>
+              </TabsContent>
+
+              {/* Advanced Tab */}
+              <TabsContent value="advanced" className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Voice ID (ElevenLabs)</Label>
+                  <Input
+                    value={newTeacher.voiceId || ''}
+                    onChange={(e) => setNewTeacher(prev => ({ ...prev, voiceId: e.target.value }))}
+                    placeholder="e.g., onwK4e9ZLuTAKqWW03F9"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {'Leave empty to use default voice'}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Brain Query Prefix</Label>
+                  <Input
+                    value={newTeacher.brainQueryPrefix || ''}
+                    onChange={(e) => setNewTeacher(prev => ({ ...prev, brainQueryPrefix: e.target.value }))}
+                    placeholder="e.g., basics fundamentals"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {'Keywords added to knowledge base queries'}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Context Source</Label>
+                  <Select
+                    value={newTeacher.contextSource || 'brain'}
+                    onValueChange={(value) => setNewTeacher(prev => ({ ...prev, contextSource: value }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="brain">Knowledge Base</SelectItem>
+                      <SelectItem value="user-history">User History</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </ScrollArea>
+
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
+              {'Cancel'}
+            </Button>
+            <Button
+              onClick={handleCreateTeacher}
+              disabled={isCreating || !newTeacher.name || !newTeacher.displayNameEn}
+              className="bg-[#0089B8]"
+            >
+              {isCreating ? (
+                <>
+                  <Loader2 className={cn("h-4 w-4 animate-spin", isRTL ? "ml-2" : "mr-2")} />
+                  {'Creating...'}
+                </>
+              ) : (
+                <>
+                  <Plus className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
+                  {'Create Teacher'}
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
