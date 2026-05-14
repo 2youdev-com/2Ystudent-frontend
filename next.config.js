@@ -9,7 +9,7 @@ const ContentSecurityPolicy = `
   img-src 'self' data: blob: https://img.youtube.com https://images.unsplash.com;
   media-src 'self' data: blob:;
   worker-src 'self' blob: https://cdn.jsdelivr.net;
-  connect-src 'self' http://localhost:3001 ws://localhost:3001 https://2ystudy-backend-wzyl23fufa-uc.a.run.app wss://2ystudy-backend-wzyl23fufa-uc.a.run.app https://2ystudy-backend-1034531078253.us-central1.run.app wss://2ystudy-backend-1034531078253.us-central1.run.app https://*.elevenlabs.io wss://*.elevenlabs.io https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com;
+  connect-src 'self' http://localhost:3001 ws://localhost:3001 https://*.vercel.app wss://*.vercel.app https://2ystudy-backend-wzyl23fufa-uc.a.run.app wss://2ystudy-backend-wzyl23fufa-uc.a.run.app https://2ystudy-backend-1034531078253.us-central1.run.app wss://2ystudy-backend-1034531078253.us-central1.run.app https://*.elevenlabs.io wss://*.elevenlabs.io https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com;
   frame-src 'self' https://www.youtube.com;
   frame-ancestors 'none';
   base-uri 'self';
