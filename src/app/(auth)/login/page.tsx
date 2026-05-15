@@ -373,8 +373,8 @@ export default function LoginPage() {
                 {[
                   { role: 'Super Admin', name: 'Super Admin', email: 'superadmin@2ystudy.com', password: 'SuperAdmin@123!', color: 'text-rose-500 bg-rose-500/8 border-rose-500/15 hover:bg-rose-500/15' },
                   { role: 'Admin', name: 'James Miller', email: 'admin@macsoft.com', password: 'Test1234', color: 'text-[#0089B8] bg-[#0089B8]/8 border-[#0089B8]/15 hover:bg-[#0089B8]/15' },
-                  { role: 'Supervisor', name: 'Daniel Roberts', email: 'daniel@macsoft.com', password: 'Test1234', color: 'text-[#0089B8] bg-[#0089B8]/8 border-[#0089B8]/15 hover:bg-[#0089B8]/15' },
-                  { role: 'Learner', name: 'Ryan Cooper', email: 'ryan@macsoft.com', password: 'Test1234', color: 'text-sky-500 bg-sky-500/8 border-sky-500/15 hover:bg-sky-500/15' },
+                  { role: 'Supervisor', name: 'Daniel Roberts', email: 'abdullah@macsoft.com', password: 'Test1234', color: 'text-[#0089B8] bg-[#0089B8]/8 border-[#0089B8]/15 hover:bg-[#0089B8]/15' },
+                  { role: 'Learner', name: 'Ryan Cooper', email: 'fahad@macsoft.com', password: 'Test1234', color: 'text-sky-500 bg-sky-500/8 border-sky-500/15 hover:bg-sky-500/15' },
                 ].map((cred, i) => (
                   <button
                     key={i}
